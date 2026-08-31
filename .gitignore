@@ -1,0 +1,16 @@
+# 216MB 的 zhwiki 索引明文。与 wiki-bot 共用一份，靠 .env 里的 ZH_INDEX 指过去，
+# 不在这个仓库里存也不重复下载。
+.cache/
+
+# 导入日志。每次重跑都会变，且几千行翻页记录进版本历史没有价值。
+data/import.log
+
+# 进度文件，只对本机的那一次导入有意义。
+data/.import-progress.json
+
+# 调研脚本的输出。结论已经写进 SPEC.md 和代码注释，原始输出不必入库。
+probe/*.txt
+
+__pycache__/
+*.pyc
+.env
