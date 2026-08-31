@@ -1,4 +1,16 @@
 group	sci	key	reason	zh_candidates
+carnivora	Felis catus	2435035	domestic	家猫
+carnivora	Bos grunniens	2441019	domestic	家牦牛|牦牛
+carnivora	Bos taurus	2441022	domestic	家牛|欧洲牛|黄牛
+carnivora	Capra hircus	2441056	domestic	家山羊|山羊
+carnivora	Ovis aries	2441110	domestic	绵羊
+carnivora	Camelus bactrianus	2441238	domestic	双峰骆驼|野骆驼
+carnivora	Lama glama	5220190	domestic	大羊驼
+carnivora	Bubalus bubalis	7422937	domestic	水牛
+carnivora	Camelus dromedarius	9055455	domestic	单峰骆驼
+carnivora	Equus caballus	2440886	domestic	岬马
+aves	Numida meleagris	2473341	domestic	普通珠鸡|珠鸡
+aves	Coturnix japonica	2474162	domestic	日本鹌鹑|鹌鹑
 marine	Caperea marginata	2440310	no-wiki	小露脊鲸
 marine	Inia geoffrensis	2440314	no-wiki	亚马逊河豚
 marine	Indopacetus pacificus	2440391	no-wiki	朗氏喙鲸
@@ -150,8 +162,6 @@ carnivora	Rusa unicolor	7261386	all-generic	水鹿
 carnivora	Rusa marianna	7261388	no-wiki	菲律宾棕鹿
 carnivora	Nanger soemmerringii	7261449	no-wiki	索马里苍羚
 carnivora	Philantomba maxwellii	7261459	no-wiki	褐麂羚
-carnivora	Camelus dromedarius	9055455	no-wiki	单峰骆驼
-carnivora	Equus caballus	2440886	no-wiki	岬马
 carnivora	Ovis jubata	11759892	no-wiki	雅布赖盘羊
 aves	Guttera pucherani	2473325	no-wiki	冠珠鸡|肯亚冠珠鸡
 aves	Guttera plumifera	2473332	no-wiki	西非冠珠鸡|长冠珠鸡

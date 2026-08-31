@@ -164,6 +164,116 @@ SOFT = 0.34   # ≥ 交给模型判定 / 避免内容重叠
 GENUS_GAP = int(os.environ.get("GENUS_GAP", "30"))   # 同属最小间隔（天）
 
 
+# ---------- 闸门判据（§5.2 / §5.3）----------
+# 这一节是闸门的**唯一实现**。taxon-check.py 和 refine-candidates.py 都从这里取，
+# 不许各写一份 —— 两份判据迟早会分叉，而分叉的那天池子里就会混进不该有的东西。
+
+# 学名格式：双名或三名法。留着三名不是为了收亚种（用户已定只做物种级），是因为 GBIF
+# 偶尔把 "Bos taurus indicus" 这类三名当 SPECIES 返回，格式校验不该把它判成脏数据。
+#
+# 种加词允许一个连字符：动物命名法里这是合法的，实测 Polygonia c-album（白钩蛱蝶，
+# 因翅上 C 形白斑得名）就被第一版正则误杀了 —— 一条真物种，而且只丢一条，
+# 不专门去数 rejected.tsv 根本发现不了。同类还有 c-aureum、t-nigrum。
+SCI_RE = re.compile(r"^[A-Z][a-z]+ [a-z]+(-[a-z]+)?( [a-z]+(-[a-z]+)?)?$")
+
+
+# 中文名：全 CJK，2–8 字。全 CJK 这一条是必须的 —— GBIF 的 zho 俗名里混着拼音
+# （Panthera tigris 只有 "Lǎohǔ"、Neofelis 有 "Yun Bao"），不过滤会把拼音当中文名。
+ZH_RE = re.compile(r"^[\u4e00-\u9fff]{2,8}$")
+
+RANK_OK = {"SPECIES", "SUBSPECIES"}
+
+# 分类层级名后缀。GBIF 的 zho 俗名里混着它们 —— Odobenus rosmarus 的候选里就有
+# 「海象属」。属级/科级条目直接违反约束 ③，而统称检测抓不到它：只有一个物种挂着
+# 这个名字，共用计数是 1。
+RANK_SUFFIX = ("属", "科", "目", "纲", "门", "族", "亚种", "类")
+
+# 家养种名录。**键是完整学名，不是种加词。**
+#
+# SPEC 原来写的是「学名不含 familiaris / domesticus / taurus 等家养种加词」。那是错的，
+# 而且错法和黑名单子串匹配一模一样。实测按种加词子串匹配会误杀四条真野生物种：
+#     Carcharias taurus       沙虎鲨        种加词真的就是 taurus
+#     Campylopterus falcatus  棕尾刀翅蜂鸟   falcatus 里含 "catus"
+#     Tetrao urogallus        松鸡          urogallus 里含 "gallus"
+#     Sus scrofa              野猪          家猪是 Sus domesticus，scrofa 是野生种
+# 所以只认全串相等。代价是名录得人工枚举、会漏；收益是不会静默误杀 —— 漏一个野生动物
+# 进不了池没人看得出来，而把沙虎鲨当家畜删掉是没法从结果里发现的。
+#
+# 收录标准是「读者会把它当家畜家禽」，不是「分类学上有过驯化史」。按这个标准：
+#   收   Bubalus bubalis（水牛）      野生的是 Bubalus arnee
+#   收   Lama glama（大羊驼）         野生的是 Lama guanicoe 原驼
+#   收   Numida meleagris / Coturnix japonica
+#        非洲和东亚确有野生种群，但中文名读起来就是家禽，占掉一天的推送不值当
+#   不收 Oryctolagus cuniculus（穴兔）它就是野生欧洲兔本种，IUCN 濒危，是个好选题
+#   不收 Rangifer tarandus（驯鹿）、Anas platyrhynchos（绿头鸭）、Columba livia（原鸽）、
+#        Gallus gallus（红原鸡）、Meleagris gallopavo（野火鸡）、Sus scrofa（野猪）
+#        本种都是野生的，被驯化的是它们的亚种 —— 只做物种级就天然拿到野生那一支
+DOMESTIC = {
+    "Felis catus", "Canis familiaris", "Canis lupus familiaris",
+    "Bos taurus", "Bos indicus", "Bos frontalis", "Bos grunniens",
+    "Capra hircus", "Ovis aries", "Bubalus bubalis",
+    "Equus caballus", "Equus asinus", "Sus domesticus",
+    "Camelus dromedarius", "Camelus bactrianus",
+    "Lama glama", "Vicugna pacos",
+    "Cavia porcellus", "Mustela putorius furo", "Bombyx mori",
+    "Gallus gallus domesticus", "Anser anser domesticus",
+    "Anas platyrhynchos domesticus", "Columba livia domestica",
+    "Numida meleagris", "Coturnix japonica",
+}
+
+
+def taxon_verdict(row):
+    """单条候选的分类闸门。返回 (ok, reason)，reason 在 ok 时为 ""。
+
+    只做**离线且单行可判**的三条：学名格式、rank、家养种。其余三条判据都不是单行
+    能判的，不在这里：
+      - 统称检测要看全池（一个名字被几个物种共用）
+      - zhwiki 存在性要扫 216MB 索引，得批量做
+      - 池内不重复要读 queue.tsv
+    见 refine-candidates.py。
+    """
+    sci = (row.get("sci") or row.get("scientific_name") or "").strip()
+    if not SCI_RE.match(sci):
+        return False, "bad-sci"
+    if (row.get("rank") or "") not in RANK_OK:
+        return False, "bad-rank"
+    if sci in DOMESTIC:
+        return False, "domestic"
+    return True, ""
+
+
+def zh_verdict(zh, generic=(), black=()):
+    """单个中文名的闸门。返回 (ok, reason)。
+
+    black 必须是**已经减去 whitelist 的**集合，且这里只做全串相等 —— 子串匹配下
+    「老虎」会连带干掉「东北虎」「孟加拉虎」，把最该收的条目全打掉。
+    """
+    zh = (zh or "").strip()
+    if not ZH_RE.match(zh):
+        return False, "bad-zh"
+    if zh.endswith(RANK_SUFFIX):
+        return False, "rank-name"
+    if zh in black:
+        return False, "blacklist"
+    if zh in generic:
+        return False, "generic"
+    return True, ""
+
+
+def load_wordlist(name):
+    """读 data/<name>：一行一词，# 开头及行内 # 之后是注释。文件不存在返回空集。"""
+    p = os.path.join(ROOT, "data", name)
+    if not os.path.exists(p):
+        return set()
+    out = set()
+    with open(p, encoding="utf-8") as f:
+        for ln in f:
+            ln = ln.split("#", 1)[0].strip()
+            if ln:
+                out.add(ln)
+    return out
+
+
 # ---------- 数据读写 ----------
 def jsonl_path():       return os.path.join(ROOT, "data", "posts.jsonl")
 def queue_path():       return os.path.join(ROOT, "data", "queue.tsv")

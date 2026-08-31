@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """阶段 1b：给每个候选物种定一个中文名，产出 data/pool.jsonl。
 
-candidates.jsonl 里每条带 zh_all（该物种全部可用中文名），这里做三件事：
+candidates.jsonl 里每条带 zh_all（该物种全部可用中文名），这里做四件事：
 
+  0. **单行闸门**（lib.taxon_verdict）：学名格式、rank、家养种。判据不在本文件里 ——
+     和 taxon-check.py 共用 lib.py 那一份，两处各写一份迟早会分叉。
   1. **统称检测**（约束 ③ 的主力闸门）。一个中文名被多个 speciesKey 共用 → 它是统称，
      从所有物种的候选里剔除。这个判断只能在全局做：单看 Carcharhinus sorrah 一条记录，
      「沙条」看不出有任何问题；只有看到另外 17 个鲨鱼种也叫「沙条」才知道它是渔业统称。
@@ -11,9 +13,8 @@ candidates.jsonl 里每条带 zh_all（该物种全部可用中文名），这�
   3. **zhwiki 存在性闸门**。定下来的名字必须在本地索引里有同名条目，否则
      fetch-material.py 取不到事实锚，agent 就只能凭记忆编。
 
-定名顺序是「先过闸门，再取最短」：剔掉统称和黑名单词、只留 zhwiki 里有条目的，
-剩下的取最短。此时最短是安全的 —— 统称已经被前两道剔掉了，剩下的短名就是正名
-（「美洲狮」而不是「北美金猫」）。
+过完这些闸门后取最短名，但那**只是初选**：剩下的名字里还有方言名和文化名，长度判不出来
+（汤匙 / 仙鹤 / 小龙虾），见下面定名处的注释。终选在 build-queue 阶段靠事实锚做。
 
 用法：
     python3 refine-candidates.py            # 产出 pool.jsonl + rejected.tsv
@@ -22,32 +23,15 @@ candidates.jsonl 里每条带 zh_all（该物种全部可用中文名），这�
 import argparse, collections, json, os, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lib import ROOT, candidates_path, zh_index_titles
+from lib import (ROOT, candidates_path, load_wordlist, taxon_verdict,
+                 zh_index_titles, zh_verdict)
 
 MIN_GENERIC = 2     # 被 ≥2 个物种共用即判为统称
-
-# 以这些字结尾的名字是**分类层级名**，不是物种名。GBIF 的 zho 俗名里混着它们：
-# Odobenus rosmarus 的候选里就有「海象属」。属级条目直接违反约束 ③，而且统称检测
-# 抓不到（只有一个物种挂着这个名字）。
-RANK_SUFFIX = ("属", "科", "目", "纲", "门", "族", "亚种", "类")
 
 
 def data(name):
     return os.path.join(ROOT, "data", name)
 
-
-def load_wordlist(name):
-    """一行一词，# 开头是注释。文件不存在返回空集。"""
-    p = data(name)
-    if not os.path.exists(p):
-        return set()
-    out = set()
-    with open(p, encoding="utf-8") as f:
-        for ln in f:
-            ln = ln.split("#", 1)[0].strip()
-            if ln:
-                out.add(ln)
-    return out
 
 
 def main():
@@ -62,6 +46,23 @@ def main():
             if ln:
                 rows.append(json.loads(ln))
     print("候选 %d 条" % len(rows))
+
+    # ---- 0. 单行闸门：学名格式 / rank / 家养种 ----
+    # 放在统称检测之前是有意的：家猫、家牛这些家养种的中文名是**独占**的（只有它们
+    # 叫「家猫」），统称检测永远抓不到。而且要先把它们剔掉，它们贡献的名字才不会
+    # 干扰后面的共用计数。
+    dropped = []
+    kept = []
+    for r in rows:
+        ok, why = taxon_verdict(r)
+        (kept if ok else dropped).append(r if ok else (r, why, "|".join(r.get("zh_all") or [])))
+    if dropped:
+        print("单行闸门拒 %d 条：%s" % (
+            len(dropped), dict(collections.Counter(w for _, w, _ in dropped))))
+        for r, why, names in dropped:
+            if why == "domestic":
+                print("   domestic  %-24s %s" % (r["sci"], names))
+    rows = kept
 
     # ---- 1. 统称检测 ----
     holders = collections.defaultdict(set)
@@ -81,9 +82,7 @@ def main():
     # ---- 3. zhwiki 闸门。一次扫完 216MB 索引，不要每个名字扫一遍 ----
     survivors = {}
     for r in rows:
-        keep = [z for z in r["zh_all"]
-                if z not in generic and z not in black
-                and not z.endswith(RANK_SUFFIX)]
+        keep = [z for z in r["zh_all"] if zh_verdict(z, generic, black)[0]]
         if keep:
             survivors[r["key"]] = keep
     wanted = {z for v in survivors.values() for z in v}
@@ -93,7 +92,8 @@ def main():
                                           100.0 * len(hit) / max(len(wanted), 1)))
 
     # ---- 定名 ----
-    pool, rejected = [], []
+    pool, rejected = [], list(dropped)
+
     for r in rows:
         keep = survivors.get(r["key"], [])
         if not keep:
