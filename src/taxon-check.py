@@ -42,6 +42,13 @@ CASES = [
      dict(sci="Canis lupus familiaris", rank="SUBSPECIES", zh="家犬"), False, "domestic"),
     ("家猫（家养种，实测混进过池子）",
      dict(sci="Felis catus", rank="SPECIES", zh="家猫"), False, "domestic"),
+    # ↓ 阶段 5 逐条看锚时抓出来的：它把四道闸门每一道都合法走完了，然后以
+    #   「靠一身汗腺把猎物活活跑垮的猿」进了 queue.tsv。判据集少了一条，不是判据写错。
+    ("智人（人属，实测混进过 queue.tsv）",
+     dict(sci="Homo sapiens", rank="SPECIES", zh="智人"), False, "excluded-genus"),
+    # ↓ 而人属之外的类人猿必须放行 —— 证明排除按属，没有连坐到整个人科
+    ("黑猩猩（人科但非人属，闸门必须放行）",
+     dict(sci="Pan troglodytes", rank="SPECIES", zh="黑猩猩"), True, ""),
 
     ("孟加拉虎（亚种，闸门必须放行）",
      dict(sci="Panthera tigris tigris", rank="SUBSPECIES", zh="孟加拉虎"), True, ""),

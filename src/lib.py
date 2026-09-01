@@ -249,12 +249,26 @@ DOMESTIC = {
     "Numida meleagris", "Coturnix japonica",
 }
 
+# 人属。**闸门的第七个漏洞，而且这次不是判据写错，是判据集里少了一条。**
+#
+# `Homo sapiens` 把四道闸门**每一道都合法走完了**：二名法格式对、rank=SPECIES、
+# order=Primates 在 TAXA 里、不是家养种、不是统称、zhwiki「智人」正文里确有学名。
+# 于是它以「靠一身汗腺把猎物活活跑垮的猿」进了 queue.tsv，是阶段 5 逐条看锚时
+# 才发现的（`[212/224] 智人 ok 803 字`）。
+#
+# 教训：闸门是**枚举**出来的，枚举就会漏。「不是读者自己」这条约束从来没人写下来过，
+# 因为它太显然了 —— 显然到没进 SPEC。所以每一批产出都得有一次人眼扫过去。
+#
+# 按属排除而不是按学名：人属其他物种（尼安德特人等）眼下靠 route=extant 挡着，
+# 但那是运气，不是判据。
+EXCLUDE_GENUS = {"Homo"}
+
 
 def taxon_verdict(row):
     """单条候选的分类闸门。返回 (ok, reason)，reason 在 ok 时为 ""。
 
-    只做**离线且单行可判**的三条：学名格式、rank、家养种。其余三条判据都不是单行
-    能判的，不在这里：
+    只做**离线且单行可判**的四条：学名格式、rank、家养种、排除属（人属）。其余三条判据
+    都不是单行能判的，不在这里：
       - 统称检测要看全池（一个名字被几个物种共用）
       - zhwiki 存在性要扫 216MB 索引，得批量做
       - 池内不重复要读 queue.tsv
@@ -267,6 +281,10 @@ def taxon_verdict(row):
         return False, "bad-rank"
     if sci in DOMESTIC:
         return False, "domestic"
+    # 属名取 sci 的第一段而不是 row["genus"] —— 后者不是每个调用方都填。
+    # SCI_RE 已经过了，所以 split 一定有第一段。
+    if sci.split()[0] in EXCLUDE_GENUS:
+        return False, "excluded-genus"
     return True, ""
 
 

@@ -269,6 +269,24 @@ def sci_in_text(raw, sci):
     return ""
 
 
+# 消歧义页。**这是判据的第六个漏洞，形态又是老一套：非空 ≠ 可用。**
+#
+# 「马鹿」在 zhwiki 是消歧义页：`'''马鹿'''可以指：` + 一串 `*[[加拿大馬鹿]]（''Cervus
+# canadensis''）`。它过了 sci_in_text —— 因为列表项里确实写着学名。于是一个"不是动物
+# 条目"的页面成了事实锚，撞约束 ③ 最直接的那一条（连"一类动物的宽泛介绍"都不是，
+# 它是个目录）。实测 226 条里 2 条（马鹿、紫晶林星蜂鸟）。
+#
+# 靠模板名认，不靠「可以指」这类词面 —— 词面会误伤正常条目里的行文。
+DAB = re.compile(r"\{\{\s*(?:Disambig|disambiguation|消歧[义義][^}]*|Dab|Hndis|Setindex"
+                 r"|Geodis|Letter-NumberCombDisambig)\s*[|}]", re.I)
+
+# 物种条目的分类信息框。**没有它基本就不是物种条目**（实测 226 条里只有 3 条没有，
+# 其中 2 条正是上面那两个消歧义页）。所以它是消歧义检测的第二道确认，也是
+# fetch-material.py 抽命名人/异名的地方。
+TAXOBOX = re.compile(r"\{\{\s*(?:Speciesbox|Taxobox|Automatic ?Taxobox|Subspeciesbox"
+                     r"|Infraspeciesbox|生物分类|生物分類|物種資訊)", re.I)
+
+
 def anchor_verdict(pages, title, sci, depth=0):
     """单个候选名的事实锚判定。返回 (ok, why, anchor_title)。
 
@@ -301,6 +319,11 @@ def anchor_verdict(pages, title, sci, depth=0):
     hit = sci_in_text(raw, sci)
     if not hit:
         return False, "no-sci", ""
+    # 消歧义页会列出多个物种连带学名，所以它一定能过 sci_in_text —— 必须单独拦。
+    # 顺序在 sci_in_text 之后：拒因里更该看到「dab」而不是「no-sci」，前者说明
+    # 条目存在但类型不对，是能靠下一个候选名救回来的那种。
+    if DAB.search(raw):
+        return False, "dab", ""
     return True, hit, title
 
 

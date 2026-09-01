@@ -93,6 +93,13 @@ CASES = [
     ("Ailurus fulgens",          ["小熊猫"],            None),
     # ↓ 只有繁体名进了池的情况：subject 该用繁体串，锚也在那儿
     ("Leptailurus serval",       ["藪貓"],              "藪貓"),
+    # ↓ 消歧义页必须拒。这条是阶段 5 抓出来的：「马鹿」是消歧义页（`'''马鹿'''可以指：`
+    #   + 一串带学名的列表项），所以它**过得了** sci_in_text —— 列表里确实写着
+    #   ''Cervus elaphus''。拿一个目录页当事实锚，clean 之后只剩 6 个字。
+    #   同一形态第六次出现：非空 ≠ 可用。
+    ("Cervus elaphus",           ["马鹿"],              None),
+    # ↓ 而「欧洲马鹿」是消歧义页指向的真条目，它该过 —— 证明 dab 判据没有连坐
+    ("Cervus elaphus",           ["欧洲马鹿"],          "欧洲马鹿"),
 ]
 
 
@@ -143,6 +150,13 @@ def verdict(fm, idx, offs, title, sci, depth=0):
         r"\b" + re.escape(genus[0]) + r"\.\s*" + re.escape(epithet), raw, re.I))
     if not (hit_full or hit_abbr):
         return False, "no_sci", "", len(raw)
+
+    # ③ 消歧义页。它一定过得了 ② —— 消歧义页正是靠"列出多个物种及其学名"存在的。
+    #    这里独立写一份正则（不 import wikitext），探针的意义就是独立见证：
+    #    两边同时写错同一条的概率远低于共用一份实现时错一处全错。
+    if re.search(r"\{\{\s*(?:Disambig|disambiguation|消歧[义義][^}]*|Dab|Hndis"
+                 r"|Setindex|Geodis)\s*[|}]", raw, re.I):
+        return False, "dab", "", len(raw)
     return True, "full" if hit_full else "abbr", title, len(raw)
 
 
