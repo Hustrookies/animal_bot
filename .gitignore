@@ -16,6 +16,13 @@ data/queue.add.tsv*
 # 运行日志（run.sh 按日期落盘）。
 logs/
 
+# 取题结果（pick.py 每天覆盖）。它是当天的中间态，不是配置 —— 入库只会制造
+# 每日一次的无意义 diff。与 wiki-bot 同处理。
+pick.json
+
+# 每日阶段/通知/构建标记。
+state/
+
 # openclaw agent 在 workspace 里自动生成的引导文件与运行状态。
 # 都是默认模板（IDENTITY.md 里还写着"Fill this in during your first conversation"），
 # 不是本项目的配置 —— wiki-bot 的 .gitignore 也是这么处理的。

@@ -37,6 +37,17 @@ ROOT = _root()
 WINDOW = int(os.environ.get("WINDOW", "183"))
 QUEUE_LOW = int(os.environ.get("QUEUE_LOW", "200"))
 
+# 单类群低水位线。**告警必须按类群判，不能只看全池。**
+#
+# 断更是单类群事件：某类群掉到 27 条时全池可能还有 220 条，全池阈值 200 不响，
+# 而那个类群的星期已经取不出题了。probe/simulate.py --starve amphibia:26 实测：
+# 全池 220 > QUEUE_LOW，告警不响，730 天里断更 3 天。
+#
+# 数字怎么来的：每类群每 7 天出 1 条，同一条要间隔 > WINDOW 天才能复现，所以一轮
+# 必须长于窗口 → 下界 WINDOW//7+1 = 27 条。实测 27 条时仍有 1 天无候选（同属冷却
+# 吃掉了那一条），28 才全绿。告警线取 30 —— 比违约点高 2 条，留出补池的时间。
+GROUP_LOW = int(os.environ.get("GROUP_LOW", "30"))
+
 # ---------- 类群表：ISO 星期 → (slug, 显示名) ----------
 GROUPS = {
     1: ("carnivora", "食肉与有蹄"),
