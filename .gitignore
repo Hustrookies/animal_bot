@@ -20,6 +20,10 @@ logs/
 # 每日一次的无意义 diff。与 wiki-bot 同处理。
 pick.json
 
+# agent 当天写的正文（每天覆盖）。**归档件 data/content/*.json 要入库**（阶段 8 靠它
+# 做 0 token 重渲），根目录这一份只是本次运行的暂存。同 wiki-bot。
+content.json
+
 # 每日阶段/通知/构建标记。
 state/
 

@@ -147,11 +147,19 @@ def pick_one(queue, posts, today, skip=()):
             len(skipped)))
 
 
-def material_of(subject_wiki):
+def material_of(subject):
     """事实锚：只读本地 data/material.json（fetch-material.py 预抓，阶段 5）。
 
     **运行时不走网络。** 中文维基的 API 在境内被阻断，运行时抓取必然失败 ——
     wiki-bot 已经用一个月的生产验证了这条：锚必须预抓并提交进 git。
+
+    **参数是 `subject`，不是第 8 列 `wiki`。** material.json 的键取自 subject
+    （fetch-material.py 那边写明了「键用 subject，查维基用 wiki」）。第一版这里传的是
+    wiki_title，于是 225 条里 48 条（21%，凡 subject 与 wiki 不同串的）全都取不到锚，
+    而状态报的是 `not_prefetched` —— 看起来像「锚还没抓」，实际 100% 抓齐了，只是
+    键名对不上。**注释当时写的「取锚文用第 8 列 wiki」是对的**（抓的时候确实用 wiki
+    去 zhwiki 找），正确的注释掩盖了错误的用法：wiki 是**取文用的标题**，subject 是
+    **锚的索引键**，两件事。这是「取字段不核键名」的第二次（第一次是 iucn_raw）。
     """
     mpath = os.path.join(lib.ROOT, "data", "material.json")
     if not os.path.exists(mpath):
@@ -160,7 +168,7 @@ def material_of(subject_wiki):
         local = json.load(open(mpath, encoding="utf-8"))
     except Exception:
         return "", "material_json_broken"
-    ent = local.get(subject_wiki)
+    ent = local.get(subject)
     if ent and ent.get("text"):
         return ent["text"], "local"
     if ent:
@@ -215,9 +223,10 @@ def main():
                         "days_ago": (today - dt.date.fromisoformat(o["date"])).days,
                         "score": 1.0, "is_previous_take": True})
 
-    # 取锚文用第 8 列 wiki，不是 subject —— 226 条里 21% 两者不同串（SPEC §6.3）。
+    # 第 8 列 wiki 是**取锚文时**用的 zhwiki 标题（226 条里 21% 与 subject 不同串，
+    # SPEC §6.3），它要进 pick.json 供人查证；但**查锚用 subject**（见 material_of）。
     wiki_title = chosen["wiki"] or chosen["subject"]
-    material, mstatus = ("", "skipped_no_wiki") if a.no_wiki else material_of(wiki_title)
+    material, mstatus = ("", "skipped_no_wiki") if a.no_wiki else material_of(chosen["subject"])
 
     left = {}
     for i in sorted(lib.GROUPS):
