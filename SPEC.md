@@ -151,15 +151,30 @@ wiki-bot 靠 7 类目 × 100 天窗口，157 条就够；本项目窗口几乎�
 替代 wiki-bot 的历史类目。按 GBIF 分类阶元切，保证每类群都有充足物种，且**天然防止
 一周七天全是猫科**：
 
-| ISO 星期 | 类群 slug | 显示名 | GBIF 过滤条件 |
+| ISO 星期 | 类群 slug | 显示名 | GBIF 分类阶元（`lib.TAXA` 实际取值） |
 |---|---|---|---|
-| 1 | `carnivora` | 食肉与有蹄 | class=Mammalia, order ∈ {Carnivora, Artiodactyla, Perissodactyla} |
-| 2 | `aves` | 鸟类 | class=Aves |
-| 3 | `marine` | 海洋动物 | order ∈ {Cetacea, Sirenia, Carcharhiniformes…} 或 habitat=MARINE |
-| 4 | `reptilia` | 爬行动物 | class=Reptilia |
-| 5 | `amphibia` | 两栖与淡水鱼 | class ∈ {Amphibia, Actinopterygii} 且 habitat=FRESHWATER |
-| 6 | `inverts` | 昆虫与无脊椎 | class ∈ {Insecta, Arachnida, Malacostraca, Cephalopoda} |
-| 7 | `mammalia` | 其他哺乳类 | class=Mammalia, order ∈ {Primates, Rodentia, Marsupialia, Chiroptera…} |
+| 1 | `carnivora` | 食肉与有蹄 | order: Carnivora, Artiodactyla, Perissodactyla, Proboscidea |
+| 2 | `aves` | 鸟类 | class: Aves |
+| 3 | `marine` | 海洋动物 | order: Cetacea, Sirenia；class: Elasmobranchii；family: Phocidae, Otariidae, Odobenidae |
+| 4 | `reptilia` | 爬行动物 | Squamata, Testudines, Crocodylia |
+| 5 | `amphibia` | 两栖与淡水鱼 | class: Amphibia；order: Cypriniformes, Siluriformes, Salmoniformes, Acipenseriformes |
+| 6 | `inverts` | 无脊椎动物 | class: Cephalopoda, Malacostraca；order: Odonata, Lepidoptera |
+| 7 | `mammalia` | 其他哺乳类 | order: Primates, Rodentia, Chiroptera, Diprotodontia, Lagomorpha, Monotremata, Peramelemorphia |
+
+这张表的初版写的是 `habitat=MARINE`、`habitat=FRESHWATER` 这类**条件式**过滤，实现时
+换成了**枚举分类阶元 + GBIF taxonKey**：GBIF 的 occurrence 端点才有 habitat 参数，
+species 端点没有，按 habitat 筛得先取回全部再本地过滤 —— 而分类阶元一步就能定位。
+
+两处偏离要记住：
+
+- **`inverts` 不含 Insecta 全纲、也不含 Arachnida。** 初版是"昆虫与无脊椎"。昆虫纲有
+  上百万物种、绝大多数没有中文名也没有 zhwiki 条目，全纲进来只会让候选池被无名甲虫
+  淹掉；蛛形纲同理。改成头足（章鱼、乌贼、船蛸）+ 甲壳（龙虾、螯虾）为主，昆虫只取
+  蜻蜓目和鳞翅目 —— 这两个目的常见种有中文名、有条目、也确实有可写的行为。
+- **`amphibia` 名不副实**：slug 叫两栖，实际含四个淡水鱼目（鲤形、鲇形、鲑形、鲟形）。
+  实测入选的 40 条里有扁吻鱼、大西洋鲑、胭脂鱼这类鱼。**这是设计如此**，显示名"两栖
+  与淡水鱼"是准的，slug 留着不改（改 slug 会让已发布的 `posts.jsonl` 对不上）。
+
 
 ### 4.2 生物地理区轮转（ISO 周数 % 6）
 
@@ -418,32 +433,100 @@ GBIF 的 zho 俗名常是繁体（`藪貓`/`大熊貓`）或拼音（`Lǎohǔ`�
 
 以"属/科/目/纲/门/族/亚种/类"结尾的名字在 `refine` 里直接剔除（这条无争议，`海象属`
 就是这么挡掉的）。**剩下的靠事实锚终检**：`build-queue.py` 按 `zh` → `zh_alt` 顺序
-逐个取 zhwiki 正文，要求正文出现该物种学名、且不是重定向页，第一个过关的才落进
-`queue.tsv`。所以 `zh_alt` 不是备注，是**有序的后备候选**，下游不得丢弃。
+逐个取 zhwiki 正文，要求正文出现该物种学名，第一个过关的才落进 `ready.jsonl`。
+所以 `zh_alt` 不是备注，是**有序的后备候选**，下游不得丢弃。
 
 这也是唯一能同时解决"汤匙"和"猫熊"的判据 —— zhwiki 上"汤匙"讲餐具（不含学名），
 "猫熊"是重定向页。
 
+#### 6.1b-1 重定向必须分两类（实测推翻了本节的初版判据）
+
+本节原来写的是"正文出现学名、**且不是重定向页**"。`probe/anchor-verdict.py` 实测证明
+**这条判据是错的**：zhwiki 大量条目存在于繁体标题下，简体名只是重定向。
+
+```
+薮猫   → 藪貓      繁简同名     跟随。subject 用简体，锚文从繁体标题取
+猫熊   → 大熊猫    真别名       拒，继续试下一个候选名
+小熊猫 → 小熊猫属  别名且属级   拒，且救不回来
+```
+
+正确的判据是**繁简归一化后同名才跟随**（`wikitext.zh_key()`，zhconv 转 zh-cn 后比较）。
+照初版判据实现的代价有实测数字：**280 条 `ready.jsonl` 里有 60 条（21%）走的是繁简
+重定向** —— 驼鹿/駝鹿、弓头鲸/弓頭鯨、棱皮龟/棱皮龜、荨麻蛱蝶/蕁麻蛺蝶……
+初版判据会把这五分之一成片误杀，而且失败方式看起来像"zhwiki 没这个条目"。
+
+真别名**不自动采用重定向目标**：那个串没过统称检测和黑名单，采用它等于给约束 ③ 开
+后门（`小熊猫 → 小熊猫属` 就是这个后门通向的地方 —— 属级条目正是"一类动物的宽泛
+介绍"）。所以拒因要分开记：
+
+| 拒因 | 含义 | 还能救吗 |
+|---|---|---|
+| `alias` | 重定向到另一个具体物种名 | 能，靠 `zh_alt` 的下一个候选 |
+| `alias-rank` | 重定向目标带分类阶元后缀 | 不能，整条丢掉 |
+| `no-sci` | 有条目但正文不含学名 | 换候选名 |
+| `not-in-index` | 索引里没这个标题 | 换候选名 |
+
+跟随繁简重定向有个前提：**重定向目标（繁体串）不在候选名单里**，必须由
+`wikitext.hant_variants()` 预先算出来一并放进 wanted，否则跟随时会 `not-in-index`。
+
+`probe/anchor-verdict.py` 与 `src/wikitext.py` 各有一份判据实现，**这是有意的**：
+探针走 wiki-bot 的取文机制，正式件走自己重写的那套，11 条用例两边结果必须一致 ——
+探针是独立见证，不要"去重"掉它。
+
+实测拒因分布（全池 7 类群、280 条入选）：
+`ok 275 / alias 40 / no-sci 12 / alias-rank 2 / hans-not-in-index 2 / hans-no-sci 1`。
+
 ### 6.2 agent 补选题角度
 
 复用 wiki-bot 的 refill 结构（单类群 + 单批 ≤8 行 + agent 只写增量文件 + 逐行验收
-+ 零产出告警）。输入是 `pool.jsonl` 的一批，agent 输出每行两样：
++ 零产出告警）。输入是 `build-queue.py --emit N --group X` 打印的批次清单（拼在
+`refill-prompt.md` 末尾），agent 输出每行**三段**：
 
+```
+subject <TAB> title <TAB> note
+```
+
+- `subject`：照抄清单，一字不改。它不是让 agent 想的，是让它**认领**的
 - `title`：一句话钩子（如"用尿液标记两百平方公里的独居者"）
 - `note`：这条值得写的角度，一句话
 
-**`subject`（中文名）不由 agent 提供。** 它由 §6.1b 定死并已过三道闸门。让 agent 补
+**其余五列（group / region / scientific_name / entities / wiki）由 `refill-check.py`
+拿 `subject` 去 `ready.jsonl` 查出来填，不让 agent 抄。** 这不是嫌它麻烦 —— 是让它在
+结构上**没有能力**改坏那些字段。`subject` 已经过完四道闸门，让 agent 复制一遍就等于
+给约束 ③ 开一个抄写错误的口子。它认领不到的 `subject` 直接判废，比事后比对字符串可靠。
+
+**`subject`（中文名）不由 agent 提供。** 它由 §6.1b 定死并已过四道闸门。让 agent 补
 中文名等于把约束 ③ 交给一个会顺手写出"老虎"的模型 —— 而且它给的名字未必在 zhwiki
 索引里，事实锚会直接断。agent 只负责"这条为什么值得读"，那才是它的强项。
 
+验收链（`refill-check.py`，逐行、任一不过即判废该行）：3 列 → `subject` 在**本类群**的
+ready 清单里 → 未在 `queue.tsv` 里 → 批内不重复 → `title` 6–26 字 → `note` 8–48 字
+→ `title` ≠ `subject` 本身 → 不含空泛模板词面 → `title` 批内不重复。
+
+空泛模板靠词面拦（`的介绍` `是一种` `科普` `揭秘` …）：agent 偷懒时写的"XX的介绍"
+在字数上完全合格，只有词面能挡。
+
 **必须避开 wiki-bot 踩过的坑**（已记录为项目缺陷经验）：refill 不得用 `|| true`
 掩盖 agent 失败，不得只数行数——要比对前后增量，零产出必须告警并 exit 1。
+
+还有一条是本项目自己踩出来的：`run.sh` 里判断验收结果**只能看退出码，不能 grep 输出**。
+初版写的是 `| grep -q '合格'`，而全废时 `refill-check.py` 打印的是"无一合格"，
+**含"合格"子串**，判据恒真 —— 当时只因为 `pipefail` 恰好把 python 的 exit 1 透出来
+才没出事故，也就是说这个判据一直是坏的、被另一个判据掩盖着。这是本项目第五次踩
+"子串匹配当相等用"（前四次：黑名单误杀东北虎、`falcatus` 含 `catus`、索引里"虎"
+命中"虎鲸"、重定向的繁简字面比较）。
+
 
 ### 6.3 事实锚
 
 `fetch-material.py` 原样复用，只把 subject 来源从 `queue.tsv` 的历史词条换成物种中文名。
 因为闸门 5.2-5 已保证中文名在索引里，锚文覆盖率应接近 100%（wiki-bot 改造后是 92%，
 剩下 8% 正是当初建池时没验索引的历史条目）。
+
+**取锚文要用 `queue.tsv` 的第 8 列 `wiki`，不是 `subject`。** 两者 21% 的情况下不同串
+（§7.1）—— 拿 `subject` 去索引里找，`藪貓`/`弓頭鯨`/`棱皮龜` 这一类会全部扑空。
+`subject` 只用于给读者显示。
+
 
 **wiki-bot 的教训要带过来**：锚文是 zhwiki 的机器清洗产物，有病句、繁简混排、600 字
 硬截断残句。prompt 必须写明"material 只提供事实，不提供行文"（wiki-bot commit `0b4d7d3`）。
@@ -452,11 +535,25 @@ GBIF 的 zho 俗名常是繁体（`藪貓`/`大熊貓`）或拼音（`Lǎohǔ`�
 
 ## 7. 数据模型
 
-### 7.1 `data/queue.tsv`（TSV，7 列）
+### 7.1 `data/queue.tsv`（TSV，8 列）
 
 ```
-类群slug  生物地理界  title  subject  scientific_name  entities(|分隔)  note
+类群slug  生物地理界  title  subject  scientific_name  entities(|分隔)  note  wiki
 ```
+
+第 8 列 `wiki` 是**锚文实际所在的 zhwiki 标题**，与 `subject` 可以不是同一个串：
+`subject=薮猫` 是读者看到的名字，`wiki=藪貓` 是取锚文要用的标题。实测 280 条里
+60 条（21%）两者不同（§6.1b-1），没有这一列，下游 `fetch-material.py` 拿 `subject`
+去索引里找就会成片扑空 —— 而且看起来像"这个物种 zhwiki 上没有"。
+
+`生物地理界` 允许为空：GBIF 的 distributions 端点只给洲际粒度，实测 280 条里 32 条
+（11%）映射不出 6 个界中的任何一个。**拿不到不丢条目** —— 界只是排期时的多样性偏好，
+不是选题资格。
+
+第 6 列 `entities` **由脚本填 `[subject]`，不由 agent 写**（偏离 §6.2 的初版设想）。
+去重主键是 `subject` + `scientific_name`（§7.3，精确匹配），`entities` 只是近似信号，
+而对物种它极容易误报 —— 两个毫不相干的物种共享"东洋界""热带雨林"就会被判成近似
+选题。宁可这一列信息量低，不要它制造假阳性。
 
 ### 7.2 `content.json` / `data/content/<date>.json`
 
@@ -584,19 +681,53 @@ cron 窗口**与 wiki-bot 错开**（wiki-bot 占 07:03/07:38/07:47/07:52）：
 
 ```
 /opt/animal/
-  run.sh  pick.py  lib.py  selfcheck.py  render.py  gen-image.py
-  publish.sh  notify.sh  wait_live.sh
-  import-gbif.py  taxon-check.py  fetch-material.py
-  prompt.md  refill-prompt.md  template.html
-  data/  queue.tsv  posts.jsonl  material.json  content/
-        candidates.jsonl  blacklist.txt  whitelist.txt  review-needed.tsv
-  docs/ index.html  archive.html  p/  img/
+  run.sh  refill-prompt.md  prompt.md  template.html  SPEC.md
+  src/    lib.py  import-gbif.py  refine-candidates.py  taxon-check.py
+          wikitext.py  build-queue.py  refill-check.py
+          pick.py  selfcheck.py  render.py  gen-image.py  fetch-material.py
+  probe/  anchor-verdict.py            # 判据的独立见证，不参与生产
+  data/   queue.tsv  ready.jsonl  posts.jsonl  material.json  content/
+          candidates.jsonl  pool.jsonl  blacklist.txt  whitelist.txt
+          generic-names.txt  rejected.tsv  anchor-rejected.tsv
+  docs/   index.html  archive.html  p/  img/
   state/  logs/  .cache/  .env
 ```
+
+Python 脚本都在 `src/`（初版这一节把它们平铺在根，实现时收进子目录了）。因此
+`lib.ROOT` **必须自动认路**，不能依赖"记得设 `ANIMAL_ROOT`"：目录名是 `src` 且父目录
+有 `SPEC.md` 就上跳一级。这条是踩出来的 —— 忘了设环境变量时的失败方式是**静默的**：
+脚本在 `src/` 下另开一套空的 `data/` 和 `.cache/`，一声不响，`wikitext.py` 就这么在
+`src/.cache` 里白下了 42MB 索引又解压出 207MB，而正确的那份就在隔壁。
 
 `.env` 相对 wiki-bot 的差异：`PAGE_BASE` 换新仓库；`IMG_API_KEY` 复用同一个；
 新增 `GBIF_TIMEOUT`、`QUEUE_LOW=200`、`WINDOW=183`。`.env` 与 `.cache/`、`state/`、
 `img_urls.jsonl` 一律 gitignore。
+
+### 11.1 openclaw agent 条目（部署必做，且不在本仓库里）
+
+refill 与日更都要调 `openclaw agent`，而 agent 的 **workspace 由 `~/.openclaw/openclaw.json`
+固定，命令行没有覆盖参数**。所以那份配置里必须有一个 `animal` 条目：
+
+```json
+{ "id": "animal", "name": "animal", "workspace": "/opt/animal",
+  "tools": { "allow": ["write"] } }
+```
+
+三件事要注意：
+
+1. **`workspace` 必须等于 `run.sh` 的工作目录。** agent 写的是相对路径
+   `data/queue.add.tsv`，两边不一致时脚本会在自己那边找不到文件，报"agent 无产出" ——
+   而 agent 那边其实写成功了。所以 refill 也要在 `/opt/animal` 跑，不在开发目录跑。
+2. **`tools.allow` 只给 `write`。** agent 唯一该做的事是写那个增量文件。
+3. **这份配置同时驱动着 wiki-bot 的生产日更。** 改之前备份，改完 `json.load` 校验并
+   确认 `wiki` 条目一字未动 —— 用 dump 前后 diff 看，只该多出 `animal` 那几行。
+
+调用形式（`--message-file` 而不是 `--message`：prompt 是多行的，塞命令行会被 shell 咬）：
+
+```
+openclaw agent --agent animal --message-file <prompt 文件>
+```
+
 
 ---
 
@@ -609,7 +740,10 @@ cron 窗口**与 wiki-bot 错开**（wiki-bot 占 07:03/07:38/07:47/07:52）：
 | 1 | `import-gbif.py` + `candidates.jsonl` | 7 类群各拉到 ≥50 条候选，字段完整 |
 | 1b | `refine-candidates.py` + `pool.jsonl` | 统称检测生效；7 类群各 ≥50 条定名候选 |
 | 2 | `taxon-check.py --selftest` | 19 条用例全绿且**拒因**也对（不只看拒没拒）。含 §12 原定的 8 条，加上四个种加词误杀、`Polygonia c-album`、"海象属"、拼音俗名、whitelist 豁免链路 |
-| 3 | agent 补选题角度 → `queue.tsv` ≥220 条 | 闸门全过；`rejected.tsv` 人工过一遍 |
+| 2b | `probe/anchor-verdict.py` | 11 条用例全绿。**这一阶段是插进来的** —— 原计划把 §6.1b 的锚判据直接写进 build-queue.py，实测发现判据本身是错的（§6.1b-1）。判据没验之前不写会往池子里写东西的脚本 |
+| 2c | `wikitext.py` | 与探针同 11 条用例**逐条结果一致**。取文层重写过，不能只看"能取到文" |
+| 3a | `build-queue.py` → `ready.jsonl` | 7 类群各 40 条、共 280 条，`subject`/学名均无重复；拒因分类统计可解释（§6.1b-1） |
+| 3b | agent 补选题角度 → `queue.tsv` ≥220 条 | 闸门全过；`anchor-rejected.tsv` 人工过一遍；每批 `refill-check.py` 的判废理由逐条可读 |
 | 4 | 730 天模拟 | §9 四项全绿——**这是约束 ① 的交付证据** |
 | 5 | `fetch-material.py` 建锚 | 覆盖率 ≥95%（闸门已保证中文名在索引里） |
 | 6 | `prompt.md` + `selfcheck.py` | 手写一份 content.json 过校验；故意写错 6 种情况都被拦 |
@@ -636,3 +770,28 @@ cron 窗口**与 wiki-bot 错开**（wiki-bot 占 07:03/07:38/07:47/07:52）：
    一年约 150MB，同样接 `alert size`。
 6. **配图计费**：每天 2 张，四个 cron 补跑窗口靠"文件已存在则跳过"保证不重复扣费。
    这条幂等性在阶段 9 必须实测（连跑两次 `run.sh daily`，确认第二次全部 `cached`）。
+7. **`alias->繁体正名` 这一类拒因是一笔未取用的容量储备（≈40 条）。** 人工过
+   `anchor-rejected.tsv` 时发现，被判 `alias` 的多数并不是"错名字"，而是海峡两岸用词
+   不同、zhwiki 采了台湾用法：
+
+   ```
+   浅海长尾鲨 → 淺海狐鯊      梅花鲨   → 豹鮫
+   绿豹斑蝶   → 綠豹蛺蝶      欧亚鲤   → 歐洲鯉
+   ```
+
+   判据拒它们是**对的**（§6.1b-1：重定向目标没过统称检测和黑名单，`鹦鹉螺 → 鹦鹉螺科`
+   就是这个后门通向的地方）。但存在一个安全的收窄：**若目标简体化后不带分类阶元后缀、
+   且过统称与黑名单检测，就可采用它作为 `subject`**（`wiki` 仍记繁体标题）。这能救回
+   约 40 个物种。**当前不做** —— 226 条已超过 183 天窗口（§3），改判据要重跑建池加
+   重跑 refill，而现有产出已经验收通过。等 `QUEUE_LOW` 告警响了再取用这笔储备。
+8. **`amphibia` 里混进了养殖经济鱼类，需要产品判断（未决）。** 实测入队的 32 条里有
+   草鱼、青鱼、武昌鱼、泥鳅、大鳞鲢 —— 四大家鱼及其近亲。它们**不违反**任何一条约束：
+   有野生种群、不是驯化品种（与家猫家犬不同类）、也是具体物种。但"草鱼"作为选题，
+   读者第一反应是餐桌而不是野生动物，agent 自己写出的钩子也承认了这点
+   （"吃水草吃到被全世界放出去的鱼"讲的是入侵）。
+
+   要不要排除是**产品判断，不是技术判断**，与挂着的"老虎/狮子该不该进黑名单"同类，
+   留给使用者定。排除的代价很低：往 `blacklist.txt` 加词面即可，`ready.jsonl` 尚有
+   54 条余量可补位。**不要顺手删掉** —— 淡水鱼是 `amphibia` 类群的一半供给，
+   连带把裂腹鱼、哲罗鲑这些真野生种删了就伤到容量了。
+

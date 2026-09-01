@@ -12,8 +12,25 @@
 import hashlib, json, os, re
 
 # 部署后脚本就在项目根（/opt/animal），所以默认取脚本所在目录 —— 与 wiki-bot 同构。
-# 本地 authoring 时源码在 animal-bot/src/，不想让 data/ 埋进 src/，用 ANIMAL_ROOT 覆盖。
-ROOT = os.environ.get("ANIMAL_ROOT") or os.path.dirname(os.path.abspath(__file__))
+# 本地 authoring 时源码在 animal-bot/src/，得上跳一级，否则 data/ 和 .cache/ 会埋进
+# src/ 里另建一套。
+#
+# 这里**不靠「记得设 ANIMAL_ROOT」**：忘了设的失败方式是静默的 —— 脚本在 src/ 下
+# 另开一套空的 data/，一声不响，然后你会以为池子是空的。已经踩过一次：wikitext.py
+# 在 src/.cache 里白下了 42MB 索引又解压出 207MB 明文，而正确的那份就在隔壁。
+# 所以自动认：目录名是 src、且父目录有 SPEC.md，就上跳一级。
+def _root():
+    env = os.environ.get("ANIMAL_ROOT")
+    if env:
+        return env
+    here = os.path.dirname(os.path.abspath(__file__))
+    up = os.path.dirname(here)
+    if os.path.basename(here) == "src" and os.path.exists(os.path.join(up, "SPEC.md")):
+        return up
+    return here
+
+
+ROOT = _root()
 
 # 半年不重复：183 天。这个数字是用户约束，不是调参空间 ——
 # 改小它就等于放弃约束 ①，改大要先确认池子够（见 pick.py --stat 的 capacity 检查）。
@@ -278,6 +295,12 @@ def load_wordlist(name):
 def jsonl_path():       return os.path.join(ROOT, "data", "posts.jsonl")
 def queue_path():       return os.path.join(ROOT, "data", "queue.tsv")
 def candidates_path():  return os.path.join(ROOT, "data", "candidates.jsonl")
+def pool_path():        return os.path.join(ROOT, "data", "pool.jsonl")
+
+# 待入队清单：过完四道闸门（含事实锚终选）、subject 已定死、只缺 agent 补的
+# title/note。build-queue.py 产出，refill 循环消费，refill-check.py 拿它验
+# agent 有没有偷改 subject。
+def ready_path():       return os.path.join(ROOT, "data", "ready.jsonl")
 def index_path():
     """zhwiki multistream 索引明文。与 wiki-bot 硬链接同一份（216MB，不重复下载）。"""
     return os.environ.get(

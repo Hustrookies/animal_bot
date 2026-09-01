@@ -5,6 +5,33 @@
 # 导入日志。每次重跑都会变，且几千行翻页记录进版本历史没有价值。
 data/import.log
 
+# 建池日志。同上 —— 结论（各类群条数、拒因分布）已经写进 SPEC，过程无价值。
+data/build-queue.log
+
+# refill 的中间文件：拼给 agent 的 prompt、agent 写的增量、验收后的合格行。
+# 每一批都被覆盖，且 run.sh 跑完就删 —— 入库只会留下半截的残骸。
+data/.refill-prompt.txt*
+data/queue.add.tsv*
+
+# 运行日志（run.sh 按日期落盘）。
+logs/
+
+# openclaw agent 在 workspace 里自动生成的引导文件与运行状态。
+# 都是默认模板（IDENTITY.md 里还写着"Fill this in during your first conversation"），
+# 不是本项目的配置 —— wiki-bot 的 .gitignore 也是这么处理的。
+AGENTS.md
+BOOTSTRAP.md
+HEARTBEAT.md
+IDENTITY.md
+SOUL.md
+TOOLS.md
+USER.md
+openclaw-workspace-state.json
+.openclaw/
+
+# refill 的原始 stdout（含 openclaw 的插件告警等噪音）。
+data/refill.out
+
 # 进度文件，只对本机的那一次导入有意义。
 data/.import-progress.json
 
