@@ -261,9 +261,22 @@ print(sum(1 for q in lib.load_queue() if q['group']=='$slug'))")
       # **不加 `|| true`。** wiki-bot 就是用 `|| true` 吞掉 agent 退出码，加上
       # 只数行数不比增量，于是 agent 超时零产出时脚本照样打印「refill 完成」并
       # exit 0，失败完全静默（已记录为项目缺陷经验）。这里退出码要留着报出来。
-      timeout "$AGENT_TIMEOUT" openclaw agent --agent "$AGENT_ID" --message-file "$PFILE"
+      #
+      # **每批一个独立 session，不复用**（2026-09-02 加）。原来这行不带 --session-key，
+      # 43 个批次全落进默认会话 agent:animal:main：上下文从 8K 一路涨到 74K，openclaw
+      # 压缩 6 次，而每次压缩后重建上下文的那一次调用要 5.3 万 input —— 实测那一小时
+      # 37.7 万 input 里有 26.7 万（71%）花在重建历史上，cacheRead 到了 430 万。
+      # **而这些历史对本任务毫无价值**：每批只是「读一份固定 prompt + N 条清单 → 写 N 行
+      # TSV」，去重由 refill-check.py 拿 queue.tsv 做，从不依赖 agent 记得上一批写过什么。
+      # key 里**必须带日期**：refill 每月 2 号跑，只写 refill-$slug-$r 的话下个月同名 key
+      # 会把上个月那个 session 的历史整段加载回来，等于没改。
+      # session 文件会随之变多（每次 refill 约 40 个），用 `openclaw sessions cleanup` 清。
+      SKEY="refill-$TODAY-$slug-$r"
+      timeout "$AGENT_TIMEOUT" openclaw agent --agent "$AGENT_ID" \
+              --session-key "$SKEY" --message-file "$PFILE"
       rc=$?
-      [ "$rc" -ne 0 ] && log "refill $slug: agent 退出码 $rc（124=超时）"
+      # session key 一并记进日志：出问题要能回到 ~/.openclaw/agents/$AGENT_ID/sessions 找那一段
+      [ "$rc" -ne 0 ] && log "refill $slug: agent 退出码 $rc（124=超时，session=$SKEY）"
 
       if [ ! -s "$ADD" ]; then
         log "refill $slug: agent 无产出（本批要 $ask 行，rc=$rc）"
@@ -346,10 +359,15 @@ if [ "$SKIP_AGENT" = 0 ]; then
     # 先删旧产物，让「文件存在」本身成为「本次真的写了它」的证据。
     # 不信 agent 的退出码 —— headless agent 退 0 却什么都没写是常见的。
     rm -f content.json
+    # session 每次一个，不复用（缘由见 refill 分支那段长注释）。daily 一天只调一次，
+    # 但共用默认会话的话上下文是**跨天**累积的 —— 那意味着每天都要为前些天的历史付一次
+    # 重建费，而写稿要的只是 prompt 加今天这一条选题。带上 $try：DUP 重试是换了题目重写，
+    # 上一轮那半截被判重的正文留在上下文里只会干扰。
+    SKEY="daily-$TODAY-$try"
     out=$(timeout "${AGENT_TIMEOUT:-300}" openclaw agent --agent "${ANIMAL_AGENT_ID:-animal}" \
-            --message-file "$PFILE" 2>&1); rc=$?
+            --session-key "$SKEY" --message-file "$PFILE" 2>&1); rc=$?
     printf '%s\n' "$out" | tail -20 >> "$LOG"
-    [ "$rc" -ne 0 ] && log "daily: agent 退出码 $rc（124=超时）"
+    [ "$rc" -ne 0 ] && log "daily: agent 退出码 $rc（124=超时，session=$SKEY）"
 
     [ -s content.json ] && break
 
