@@ -1,9 +1,9 @@
 <!doctype html>
-<!-- 仓库根的入口页。
-     GitHub Pages 的发布源目前是仓库根（不是 /docs），而站点内容都在 docs/ 下 ——
-     没有这一页，根路径就是 404。加了 .nojekyll 之后 Jekyll 不再拿 README 生成首页，
-     所以这一页必须自己存在。
-     Settings → Pages 把 Source 目录改成 /docs 之后，这一页不再被服务，留着也无害。 -->
+<!-- 仓库根的入口页。**当前不被服务** —— Pages 的 Source 目录是 /docs（用户 2026-09-02 改），
+     所以根路径由 docs/index.html 承担，而那是 render.py 生成的当天页面本身，比重定向更好。
+     这一页留着是回退备用：Source 若改回仓库根，站点内容都在 docs/ 下，没有它根路径就是 404
+     （根 .nojekyll 之后 Jekyll 不再拿 README 生成首页）。届时 .env 的 PAGE_BASE 要同步加回
+     /docs —— 两者必须成对改，见 SPEC §13 第 13 条。 -->
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta http-equiv="refresh" content="0; url=docs/">
 <title>每日一种野生动物</title></head>

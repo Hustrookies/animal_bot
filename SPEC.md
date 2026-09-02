@@ -925,15 +925,25 @@ render.py** 去比这个子集关系。复制一份常量就是"两处对不上"
 stage 状态机与 wiki-bot 完全一致：`none → content → imaged → rendered → pushed → notified`。
 重复执行按 stage 分流，已完成直接 exit 0。
 
-cron 窗口**与 wiki-bot 错开**（wiki-bot 占 07:03/07:38/07:47/07:52）：
+cron 窗口由**推送时刻**倒推（用户 2026-09-02 定：微信在 **12:00 整**收到）：
 
 ```
-5  8 * * *   /opt/animal/run.sh daily   >/dev/null 2>>/opt/animal/logs/cron.log
-40 8 * * *   /opt/animal/run.sh notify  >/dev/null 2>>/opt/animal/logs/cron.log
-49 8 * * *   /opt/animal/run.sh daily   >/dev/null 2>>/opt/animal/logs/cron.log   # 补跑
-54 8 * * *   /opt/animal/run.sh notify  >/dev/null 2>>/opt/animal/logs/cron.log
+25 11 * * *  /opt/animal/run.sh daily   >/dev/null 2>>/opt/animal/logs/cron.log
+0 12 * * *   /opt/animal/run.sh notify  >/dev/null 2>>/opt/animal/logs/cron.log
+20 12 * * *  /opt/animal/run.sh daily   >/dev/null 2>>/opt/animal/logs/cron.log   # 补跑
+25 12 * * *  /opt/animal/run.sh notify  >/dev/null 2>>/opt/animal/logs/cron.log
 23 3 2 * *   /opt/animal/run.sh refill  >/dev/null 2>>/opt/animal/logs/cron.log   # 月度补池，与 wiki-bot 的 1 号错开
 ```
+
+**先定 notify、再倒推 daily**，不是先挑一个出稿时刻。"推送时间 12:00"这句需求约束的是
+`notify` 那一行；`daily` 提前 35 分钟到 11:25 是余量而非平均耗时 —— agent 写稿+出图实测
+2–5 分钟、Pages 构建 30s–2min，35 分钟留给慢的那天。把 daily 排在 12:00 会让用户在 12:35
+才收到消息，需求就落空了。
+
+同机三家 cron 互不重叠：wiki-bot 占 07:03/07:38/07:47/07:52，trend-digest 占 12:15。
+12:00 那次 notify 最迟 12:05 收工（`wait_live` 预算 300s + 起步 sleep 20s），**补跑窗口
+特意放在 12:20 让开 12:15** —— 补跑那次通常 0.1 秒就按 stage 跳过，但异常日它会真去调
+agent，那时才可能和别人抢资源。
 
 **stdout 丢掉、stderr 留档**（wiki-bot 是 `2>&1` 一起丢）：stdout 已由 `run.sh` 自己 tee 进
 `logs/<date>.log`，重复没必要；而 stderr 才装着真正需要人看的东西 —— `wait_live` 的末次
@@ -1021,10 +1031,13 @@ IUCN 中文标签**复用 `render.py` 的那张表**，不在 notify 里重写�
 必须一致**：只要有一个用了 `set -a; . ./.env; set +a`，那个脚本里命令行传的值就会被 `.env`
 盖回去，而它看起来完全正常（§10.1 末段记了两次代价）。
 
-`.nojekyll` 放**两处**：根目录那份对当前配置生效（Pages 发布源是仓库根），`docs/` 那份
-等 Source 改成 `/docs` 之后生效。没有它，正文里万一出现 `{{` 或 `{%`，Liquid 会让整站
-构建失败 —— 而那时所有页面都停在旧版本，`wait_live` 会判 STALE。根 `index.html` 是个到
-`docs/` 的重定向：加了 `.nojekyll` 之后 Jekyll 不再拿 README 生成首页，没有它根路径是 404。
+`.nojekyll` 放**两处**：`docs/` 那份对当前配置生效（Source 目录已是 `/docs`），根目录那份
+是 Source 改回仓库根时的备用。没有它，正文里万一出现 `{{` 或 `{%`，Liquid 会让整站构建
+失败 —— 而那时所有页面都停在旧版本，`wait_live` 会判 STALE。
+
+根 `index.html` 是个到 `docs/` 的重定向，**Source 改成 `/docs` 之后它不再被服务**（留着
+无害，是回退备用）。现在的根路径由 `docs/index.html` 承担 —— 它是 `render.py` 生成的**当天
+页面本身**，不是重定向，实测 `GET /animal_bot/` 直接返回带 `x-build` 的正文，比重定向更好。
 
 **发布拆成两个文件，是为了让脆的那一半能跑用例。** wiki-bot 把追加 posts.jsonl 的逻辑
 写成 `publish.sh` 里的 python heredoc —— 那样写有一个具体后果：**它永远跑不了用例**，
@@ -1299,7 +1312,19 @@ sub=cached`，图片 md5 逐字节不变，`img_urls.jsonl` 保持 2 行，posts
 才是 200。根路径 200 是 Jekyll 拿 README 生成的默认页，它让"站点是好的"这个印象很有说服力。
 阶段 9 的 verify 查不出这个 —— 它是**本地**终检，四项全绿说的是"本地产物自洽且已推送"，
 与"线上那个 URL 能不能打开"是两件事。这也正是 `wait_live` 存在的理由：它是唯一会去点那个
-链接的一步。修法：`PAGE_BASE` 加 `/docs`（PAT 没有 Pages:write 权限，API 改不了，403）。
+链接的一步。当时的修法：`PAGE_BASE` 加 `/docs`（PAT 没有 Pages:write 权限，API 改不了，403）。
+
+> **后续（同日）**：用户在 Settings → Pages 把 Source 目录改成了 `/docs`，`PAGE_BASE` 随即
+> 去掉那一段，恢复成 `https://hustrookies.github.io/animal_bot`。**这一改要成对做** ——
+> Source 已切而 `PAGE_BASE` 还带 `/docs` 的那一刻，线上 `/docs/p/*.html` 立刻变成 404，
+> 下一次 notify 就会判 NOT_FOUND 发降级消息，而页面其实好着。改完实测：`wait_live → LIVE`
+> 21.9s，消息里两个链接（正文页、往期）都是 200。
+>
+> 改 `PAGE_BASE` **不需要重渲历史页面**：它只被 `run.sh` 和 `notify.sh` 读，`render.py` 一个
+> 环境变量都不读，页面里没有 canonical/og:url，站内链接一律相对（`p/*.html` 里是
+> `../archive.html`），`posts.jsonl` 的 `url` 也是相对的。`.env` 里原本那句"render.py 用它拼
+> canonical/og:url"是照抄 wiki-bot 时没验的**假注释**，按它理解会以为改 base 必须重渲全站 ——
+> 已就地更正。注释写错比不写更贵：它会让下一次改动多做一堆无用功，且没人会去质疑它。
 
 **② `wait_live` 把 404 报成"本机断网" —— 而那条路径既不发消息也不发告警，完全静默。**
 照抄 wiki-bot 的 `curl -fsS`：`-f` 让 HTTP 404 也返回失败（exit 22），于是"页面还没上线"
@@ -1320,8 +1345,8 @@ sub=cached`，图片 md5 逐字节不变，`img_urls.jsonl` 保持 2 行，posts
 多等 45 秒。修法：落文件再 grep。
 
 **④ stage 机漏了 `notified`，agent 会重跑一遍。**
-阶段 9 的分流表是 `content|imaged|rendered|pushed`。加上 `notified` 这一级之后，08:40 通知
-发完、08:49 的补跑窗口进来会认为"今天还没出稿"→ agent 重写一篇、覆盖 `content.json`、
+阶段 9 的分流表是 `content|imaged|rendered|pushed`。加上 `notified` 这一级之后，通知发完、
+补跑窗口（现在是 12:20）进来会认为"今天还没出稿"→ agent 重写一篇、覆盖 `content.json`、
 两张图重出 —— **白花两份钱，而日志一路全绿**。这是本项目第二次遇到"枚举漏项导致判据
 整体失效"（上次是闸门枚举漏项放行 `Homo sapiens`）。
 
@@ -1408,13 +1433,13 @@ sub=cached`，图片 md5 逐字节不变，`img_urls.jsonl` 保持 2 行，posts
     `art.main.get("file", "默认图")`，空串会**绕过默认值**拿到一个 `src=""` ——
     页面裂图而日志全绿。阶段 8 取图必须判真值而不是判键存在。
 13. **`PAGE_BASE` 与 GitHub Pages 的 Source 目录是一对必须同时改的耦合**（阶段 10 实测）。
-    当前 Source 是仓库根，所以 `PAGE_BASE` 末尾带 `/docs`。**建议在 Settings → Pages 把
-    Source 目录改成 `/docs`**：改完之后 URL 少一段、根路径直接是当天页面、与 wiki-bot 对齐，
-    同时 `PAGE_BASE` 必须同步去掉 `/docs`，否则会变成 `/docs/docs/`。
-    这一步只能人工做 —— PAT 没有 Pages:write 权限（`PUT /repos/../pages` 返回 403
-    `Resource not accessible by personal access token`）。
-    改之前不要动 `PAGE_BASE`：两处不一致的表现是 `wait_live` 判 NOT_FOUND、每天发降级消息，
-    而页面其实完全正常。
+    **已于 2026-09-02 处理完**：用户把 Source 改成 `/docs`，`PAGE_BASE` 同步去掉 `/docs`，
+    现在是 `https://hustrookies.github.io/animal_bot`。改完实测 `wait_live → LIVE`。
+    留下这一条不是遗留问题，而是**约束仍然在**：以后任何一侧单独变动都会让 notify 判
+    NOT_FOUND、每天发降级消息，而页面其实完全正常 —— 症状指向 Pages 构建，病根在这一行
+    配置，方向是错的。另外 PAT 没有 Pages:write 权限（`PUT /repos/../pages` 返回 403
+    `Resource not accessible by personal access token`），所以 Source 那一侧**只能人工改**，
+    脚本无法自愈，也无法自检"两侧是否仍然一致"。
 14. **`logs/cron.log` 只收 stderr，正常应为空文件。** 它不参与 `find logs -mtime +14 -delete`
     的日常轮转判断（一直在写就不会被删），但**没有人会主动去看它** —— 观察期结束后应当
     确认它是空的；若有内容，里面装的是 cron 环境下才会暴露的问题（PATH、权限、tty）。
