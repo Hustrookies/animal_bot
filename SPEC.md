@@ -811,6 +811,83 @@ QUEUE_LOW=200 → 220 > 200，告警不响
 
 ---
 
+## 9b. 页面与渲染
+
+`src/render.py` + `template.html`，0 token。
+
+### 9b.1 只吃 content.json 一个文件
+
+**渲染不读 `pick.json`。** 这不是洁癖，它是「`data/content/*.json` 可 0 token 重渲」
+这条性质能不能成立的分水岭：
+
+| | wiki-bot | 本项目 |
+|---|---|---|
+| 归档件内容 | 只有 content | 只有 content |
+| 渲染还需要什么 | `cat_slug`/`cat_label`/`date_label`/`buildid` 四个 meta，**都不在归档件里** | 无 |
+| 重渲入口 | **没有**（只有 `--sample` 读 samples/ 输出到 /tmp） | `--rebuild <date>` / `--rebuild-all` |
+| 结论 | 那条性质今天没有任何一条命令能做到，是声称 | 实测 3 期重渲通过 |
+
+本项目天然自足是**阶段 6 骨架设计的意外红利**：content.json 自带 `date`/`group`/
+`group_label`，而 `selfcheck.py` 已逐字校验过它们与 pick 一致（§7.2）。
+`date_label` 由 `date` 现算（不从 pick 抄）—— 重渲时 pick.json 早被后面的日子覆盖了。
+
+### 9b.2 buildid 必须覆盖模板
+
+`page_buildid() = f(date, content, **template**)`。**实测踩出来的**：照 wiki-bot 只哈希
+content 时，把 CSS 的 `max-width:640px` 改成 641 重渲，页面确实变了而 buildid
+一个字符没变。后果有两个 —— 阶段 10 的 `wait_live` 会立刻"通过"（线上 buildid 本来
+就等于新算的这个），而线上样式还是旧的；`publish.sh` 若拿 buildid 判断要不要提交，
+会把整次模板更新跳过。**页面 = 内容 + 模板，签名就该覆盖两者。**
+这条对 wiki-bot 同样成立。
+
+### 9b.3 不做 themes/，但要剥注释
+
+7 个类群版式完全一样，差异只有主题色（`lib.THEME_COLOR`），所以 CSS 直接写在
+`template.html` 里 —— 不设 `themes/` 目录，少一个"缺文件就 sys.exit"的故障点。
+（wiki-bot 需要 7 个皮肤文件是因为它 7 个类目的版式真的不同。）
+
+代价是模板顶部的实现说明会原样进入页面，所以渲染后要**剥掉说明性注释**。
+这不是体积问题：wiki-bot 的线上 `index.html` 至今带着「观感差异全部来自
+themes/t-\*.css」和整段 base.css 注释，等于把内部实现说明发到公网；更荒唐的是注释里
+写的 `{{key}}` 示例被模板引擎当成变量替换成了空串。
+
+剥的时候必须用负向前查排除 `each:`/`if:` ——那两类也是 HTML 注释形式，但它们是
+**引擎语法**，剥早了 `selfcheck_html` 的"残留模板标记"检查就静默失效了。
+
+### 9b.4 名录卡：空值消失是每天的正常路径
+
+`profile` 的每个字段都可以是空串（prompt.md 明确许可，薄锚下多数数字填不出来），
+空行整行不出现。所以「空值消失」不是异常处理，是 **58 条薄锚每天都要走的路径**。
+
+**但整块的出现条件必须是「有数字行**或**有等级」。** selftest 查出来的：原来整块由
+`if:profile_rows` 控制，于是薄锚选题会把 IUCN 等级一起吞掉 —— 而等级恰恰是动物条目
+最有价值的单一事实，也常常是薄锚里唯一有的那条。模板引擎的 `if` 不支持 `or`，
+所以在 `build_scope` 里合成 `has_profile`。
+
+**同一条原则在归档页上漏了一次。** 缺 `group_label` 时那行仍然输出
+`<span class="c"></span>` —— 那个 span 带边框，空着就是一排小空框，而 `group_label`
+今天没有写入方，所以是**每一行**。24 条用例全过（其中一条还专门验了「缺 group_label
+不崩」），这是部署侧真渲染看出来的：**不崩和不难看是两条，得分开钉**。现在空值时整个
+span 不输出，并补了第 25 条用例（`class="c"` 不得出现）。
+
+### 9b.5 页面上的两条硬要求
+
+- **AI 标注是模板固定文本**，不取任何 content 字段 —— agent 漏写就没有标注。
+  `selfcheck_html` 逐条比对「几张图就要有几处标注」，改坏模板会在渲染时停下，
+  而不是发布后靠人眼发现。
+- **学名排斜体、紧跟中文名。** 它是读者核对物种身份的唯一凭据（AI 图会画错，
+  §13.2），归档页也列出学名 —— 那里是发现"两期其实是同一个种"最容易的地方。
+
+### 9b.6 posts.jsonl 的字段契约（留给阶段 9）
+
+归档页用 `POSTS_FIELDS = date / group_label / title / scientific_name / summary`。
+前四个里 `date`、`subject`、`scientific_name`、`title`、`summary` 已由 `pick.py` 在用，
+但 **`group_label` 今天还没有任何写入方** —— `publish.sh` 是阶段 9 的事。
+写成常量并配用例，是为了让阶段 9 有个明确的对象可核；本项目已经栽过两次
+「取字段不核键名」（`iucn_raw`、`pick.py` 拿 `wiki` 当键查 material）。
+
+---
+
 ## 10. 流水线与 cron
 
 stage 状态机与 wiki-bot 完全一致：`none → content → imaged → rendered → pushed → notified`。
@@ -902,7 +979,7 @@ openclaw agent --agent animal --message-file <prompt 文件>
 | 5 | `fetch-material.py` 建锚 | 覆盖率 ≥95%（闸门已保证中文名在索引里）。**实测 225/225 = 100%、零网络、5 秒**，因为取文层复用 `wikitext.Pages` 且正文在建池时已缓存。附带查出三条物种条目特有的清洗缺陷与闸门的第七个漏洞（§6.3-1、§6.3-2）；逐条人眼过一遍锚是这一阶段不可省的动作 |
 | 6 | `prompt.md` + `selfcheck.py` | 手写一份 content.json 过校验；故意写错 6 种情况都被拦。**实测 15/15**：11 种写错被拦（含学名错一字母、悄悄换主体、伪注释键、换个中文名撞同一学名）+ 合格样本通过 + 「字迹不可辨」必须放行 + prompt 与禁用词表同步。这一阶段唯一无法靠搬完成，两个产出互为契约，风险不在各自写错而在**两者对不上**（§12.6） |
 | 7 | `gen-image.py --dry-run` | prompt 含学名与近似种负向词。**实测 18 条用例全绿**，并查出 §8.1 风格表本身是错的（类群风格里混着姿态与背景，与主图的生境描述打架）、近似种只能做到同属（40%）、硬约束 3 此前只有注释没有检查 —— 详见 §12.7。这一阶段的价值全在 `--dry-run`：不花一分钱，把每天都会发生的缺陷看出来了 |
-| 8 | `render.py` + 模板 | 页面含 AI 标注；`data/content/*.json` 可 0 token 重渲 |
+| 8 | `render.py` + 模板 | 页面含 AI 标注；`data/content/*.json` 可 0 token 重渲。**实测 25 条用例全绿**，3 期归档件 `--rebuild-all` 通过。查出的三件事都是**参照物本身的错**：wiki-bot 那条重渲能力今天没有任何命令能做到、模板说明注释会原样发到公网、buildid 漏掉模板 —— 详见 §9b 与 §12.8 |
 | 9 | 全链路 `run.sh once` | 端到端出一期，检查 stage 流转与幂等（连跑两次不重复计费） |
 | 10 | 挂 cron + 通知 | 观察 3 天 |
 
@@ -998,6 +1075,55 @@ selfcheck 放行的是内容，本脚本若顺手改了正文或 `subject`，等
 
 这是本项目第三次遇到同一形态：**约束写在注释里而没有可执行的检查**（前两次是 §12.6 的
 `alt` 必填与 `uncertain`，prompt 承诺了、校验器完全没查）。
+
+
+### 12.8 阶段 8 实测：三个缺陷全在参照物本身
+
+这一阶段本以为是最没有悬念的一段（照 wiki-bot 的 `render.py` 搬，模板换个骨架）。结果
+查出的三件事**没有一件是本项目写错的**，全是照搬对象自己的问题；而它们都是靠
+`--selftest` 和一次 `sed` 改 CSS 的实测撞出来的，**没有一个是读代码想出来的**。
+
+**① wiki-bot 的"0 token 重渲全站"是声称，不是能力。** 它的 `render.py` 只有 `--sample`
+（读 `samples/*.json` 输出到 `/tmp`），**没有任何读归档件的入口**；而 `publish.sh` 写的
+归档件只存 `content`，渲染需要的 `cat_slug`/`cat_label`/`date_label`/`buildid` 四个 meta
+字段全都不在里面。也就是说那条性质今天没有任何一条命令能做到（§9b.1 有对比表）。
+
+本项目**天然没有这个问题**，这是阶段 6 骨架设计的意外红利：content.json 自带
+`date`/`group`/`group_label`，而 `selfcheck.py` 逐字校验过它们与 pick 一致，于是渲染
+只读 content.json 一个文件、`pick.json` 完全不参与，`--rebuild` 是几行代码的事。
+`date_label` 由 `date` 现算而不是存下来 —— 重渲时 pick.json 早被后面的日子覆盖了。
+
+**② 模板顶部的说明注释会原样发到公网。** 首跑 selftest 报「AI 标注 3 处而不是 2 处」，
+根因是模板注释整段进了页面 —— 我在里面写的实现吐槽也会一起发出去。回头核实 wiki-bot
+的线上 `index.html`：它至今带着「观感差异全部来自 themes/t-*.css」和整段 base.css 注释，
+更荒唐的是注释里的 `{{key}}` 示例被引擎当成变量替换成了空串。
+
+修法必须精确：剥注释的正则要用**负向前查排除 `each:`/`if:`** —— 那两类也是 HTML 注释
+形式，但它们是引擎语法，剥早了 `selfcheck_html` 的「残留模板标记」检查就静默失效
+（又一次"检查看起来在跑、其实什么都没查"）。
+
+**③ `buildid = f(date, content)` 漏掉了模板。** 把 CSS 的 `max-width:640px` 改成 641
+重渲，页面真的变了而 buildid **一个字符都没变**。后果有两个：阶段 10 的 `wait_live` 会
+立刻"通过"（线上 buildid 本来就等于新算的这个）而线上样式还是旧的；`publish.sh` 若拿
+buildid 判断要不要提交，还会整次跳过。**页面 = 内容 + 模板，签名就该覆盖两者。**
+这条对 wiki-bot 同样成立。修的时候顺手把 `main()` 里那处独立实现也改走同一个
+`page_buildid()`，否则将来两处会对不上 —— 那是比漏算更难查的形态。
+
+**④ selftest 还查出 IUCN 徽章被 `if:profile_rows` 连带吃掉。** 58/225 = 26% 是薄锚选题
+（体长体重寿命都填不出来），而 IUCN 等级恰恰是它们唯一有的那条，也是动物条目最有价值
+的单一事实。模板引擎的 `if` 不支持 `or`，所以在 `build_scope` 里合成 `has_profile`
+（有数字行**或**有等级）。空值消失在本项目是每天的正常路径，不是异常分支（§9b.4）。
+
+顺带把 `posts.jsonl` 的字段契约固化成 `POSTS_FIELDS` 常量 + 4 条用例：其中
+**`group_label` 今天还没有任何写入方**（`publish.sh` 属阶段 9）。写在这里是为了让
+阶段 9 有明确的对象可核，而不是等页面上类群标签全空了才发现 —— 本项目已经栽过两次
+「取字段不核键名」（`iucn_raw`、`pick.py` 拿 `wiki` 当键查 material）。
+
+**⑤ 最后一个缺陷是 24 条用例全过之后、部署侧真渲染看出来的。** 归档页缺
+`group_label` 时仍然输出空的 `<span class="c"></span>`，而那个 span 带边框 —— 今天
+每一行都会挂一个小空框。用例里明明有一条「缺 group_label 不崩」，它只验了不崩。
+**不崩和不难看是两条，得分开钉**（补成第 25 条）。这也说明 §9b.4 那条"空值消失"的
+原则当时只落在详情页的名录卡上，归档页漏了 —— 原则写进 SPEC 不等于每处都照做了。
 
 
 

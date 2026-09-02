@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<!--
+  每日一种野生动物 · 单骨架模板
+  由 src/render.py 渲染。7 个类群共用这一份结构与这一份 CSS，观感差异只来自
+  {{theme_color}}（lib.THEME_COLOR）—— **刻意不做 themes/ 目录**：wiki-bot 需要 7 个
+  皮肤文件是因为 7 个类目的版式真的不同，本项目 7 个类群的版式完全一样，
+  多一个文件就多一个"缺文件就 sys.exit"的故障点。
+
+  模板语法（沿用 wiki-bot/render.py 的正则引擎）：
+    {{key}}                                  标量替换，自动 HTML 转义
+    <!-- each:list --> … <!-- /each:list -->  遍历，块内直接用该项字段
+    <!-- if:key --> … <!-- /if:key -->        值为 null/""/[]/{}/0/false 时整块删除
+
+  两条不许改的硬要求（SPEC §8.2 ②）：
+    1. 图注下面那行「插图由 AI 生成，仅供示意，非真实影像」是**模板固定文本**，
+       不取任何 content 字段 —— agent 漏写就没有标注，那是不可接受的失败方式。
+       render.py 有一条用例逐字钉住它。
+    2. 学名用 <i> 排斜体（双名法的排版惯例），且紧跟中文名 —— 页面上它是读者
+       核对物种身份的唯一凭据，AI 图画错了只能靠它发现。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="format-detection" content="telephone=no">
+<meta name="theme-color" content="{{theme_color}}">
+<meta name="x-build" content="{{buildid}}">
+<meta name="description" content="{{summary}}">
+<title>{{title}} · {{group_label}}</title>
+<style>
+:root{
+  --accent:{{theme_color}};
+  --paper:#f7f6f2; --card:#fff; --fg:#17181a; --dim:#54565b; --muted:#8a8c92;
+  --line:#e6e4dd; --tint:#faf9f5;
+}
+@media(prefers-color-scheme:dark){:root{
+  --paper:#0e1013; --card:#181b20; --fg:#e8eaed; --dim:#a2a8b0; --muted:#7d838b;
+  --line:#282c33; --tint:#14171b;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--fg);
+  font:16px/1.75 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+  -webkit-text-size-adjust:100%}
+.wrap{max-width:640px;margin:0 auto;padding:26px 16px 44px}
+
+/* ---------- 头部 ---------- */
+.kicker{font-size:12.5px;color:var(--muted);letter-spacing:.06em;margin-bottom:9px}
+.kicker b{color:var(--accent);font-weight:600}
+h1{font-size:25px;line-height:1.38;margin:0 0 12px;letter-spacing:-.01em}
+.ident{display:flex;flex-wrap:wrap;gap:4px 9px;align-items:baseline;
+  padding-bottom:14px;border-bottom:2px solid var(--accent)}
+.ident .zh{font-size:16.5px;font-weight:600}
+.ident .sci{font-size:14.5px;color:var(--dim);font-style:italic;letter-spacing:.01em}
+
+/* ---------- 配图 ---------- */
+figure{margin:18px 0 0}
+figure img{width:100%;height:auto;display:block;border-radius:10px;background:var(--tint)}
+figcaption{font-size:12.5px;color:var(--dim);line-height:1.6;margin-top:8px}
+.aigen{font-size:11.5px;color:var(--muted);margin-top:4px;display:flex;gap:5px;align-items:center}
+.aigen::before{content:"";width:5px;height:5px;border-radius:50%;
+  background:var(--muted);flex:none;opacity:.7}
+
+/* ---------- 摘要 ---------- */
+.lead{font-size:16.5px;line-height:1.8;margin:20px 0 0;color:var(--fg)}
+
+/* ---------- 名录卡 ---------- */
+.profile{background:var(--card);border:1px solid var(--line);border-radius:12px;
+  padding:15px 16px;margin:20px 0 0}
+.iucn{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;
+  padding:4px 10px;border-radius:20px;margin-bottom:11px;font-weight:600;
+  background:var(--tint);border:1px solid var(--line)}
+.iucn i{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
+.iucn.x i,.iucn.ew i{background:#1a1a1a}
+.iucn.cr i{background:#c0392b}
+.iucn.en i{background:#d35400}
+.iucn.vu i{background:#c9a227}
+.iucn.nt i{background:#7f9c3a}
+.iucn.lc i{background:#3f8f52}
+.iucn .src{font-weight:400;color:var(--muted);font-size:11.5px}
+.rows{display:grid;grid-template-columns:auto 1fr;gap:7px 14px;font-size:14.5px}
+.rows .k{color:var(--muted);white-space:nowrap}
+.rows .v{color:var(--fg);min-width:0;overflow-wrap:break-word}
+
+/* ---------- 正文 ---------- */
+.body section{margin:24px 0 0}
+.body h2{font-size:16px;margin:0 0 7px;color:var(--accent);
+  display:flex;align-items:center;gap:8px}
+.body h2::after{content:"";height:1px;background:var(--line);flex:1}
+.body p{margin:0;color:var(--dim);line-height:1.82}
+
+/* ---------- 存疑 ---------- */
+.uncertain{margin:26px 0 0;padding:13px 15px;border-radius:10px;
+  background:var(--tint);border:1px dashed var(--line)}
+.uncertain .lbl{font-size:12px;color:var(--muted);letter-spacing:.04em}
+.uncertain ul{margin:8px 0 0;padding-left:19px}
+.uncertain li{font-size:13.5px;color:var(--dim);line-height:1.7;margin:3px 0}
+
+/* ---------- 标签 / 页脚 ---------- */
+.tags{display:flex;flex-wrap:wrap;gap:7px;margin:24px 0 0}
+.tags span{font-size:12.5px;color:var(--dim);background:var(--card);
+  border:1px solid var(--line);border-radius:5px;padding:3px 9px}
+footer{margin:30px 0 0;padding-top:15px;border-top:1px solid var(--line);
+  font-size:12.5px;color:var(--muted)}
+footer .r{display:flex;justify-content:space-between;gap:12px;padding:3px 0}
+footer a{color:var(--accent);text-decoration:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="kicker"><b>{{group_label}}</b> · {{date_label}}</div>
+    <h1>{{title}}</h1>
+    <div class="ident">
+      <span class="zh">{{subject}}</span>
+      <!-- if:sci --><span class="sci">{{sci}}</span><!-- /if:sci -->
+    </div>
+  </header>
+
+  <!-- 无图时整块消失。file 由 gen-image.py 写回，**失败时是空字符串而不是缺键**
+       （SPEC §13.12），所以 render.py 一律用 `or ""` 取真值，不能用 get 的默认值。 -->
+  <!-- if:img_main -->
+  <figure>
+    <img src="{{img_main}}" alt="{{img_main_alt}}" loading="eager">
+    <!-- if:img_main_alt --><figcaption>{{img_main_alt}}</figcaption><!-- /if:img_main_alt -->
+    <div class="aigen">插图由 AI 生成，仅供示意，非真实影像</div>
+  </figure>
+  <!-- /if:img_main -->
+
+  <p class="lead">{{summary}}</p>
+
+  <!-- if:has_profile -->
+  <div class="profile">
+    <!-- if:iucn_label -->
+    <div class="iucn {{iucn_class}}"><i></i>{{iucn_label}}<!-- if:iucn_source --><span class="src">{{iucn_source}}</span><!-- /if:iucn_source --></div>
+    <!-- /if:iucn_label -->
+    <!-- if:profile_rows -->
+    <div class="rows">
+      <!-- each:profile_rows -->
+      <span class="k">{{k}}</span><span class="v">{{v}}</span>
+      <!-- /each:profile_rows -->
+    </div>
+    <!-- /if:profile_rows -->
+  </div>
+  <!-- /if:has_profile -->
+
+  <div class="body">
+    <!-- each:sections -->
+    <section><h2>{{h}}</h2><p>{{p}}</p></section>
+    <!-- /each:sections -->
+  </div>
+
+  <!-- if:img_sub -->
+  <figure>
+    <img src="{{img_sub}}" alt="{{img_sub_alt}}" loading="lazy">
+    <!-- if:img_sub_alt --><figcaption>{{img_sub_alt}}</figcaption><!-- /if:img_sub_alt -->
+    <div class="aigen">插图由 AI 生成，仅供示意，非真实影像</div>
+  </figure>
+  <!-- /if:img_sub -->
+
+  <!-- if:uncertain -->
+  <div class="uncertain">
+    <span class="lbl">存疑 · 以下说法未经确证</span>
+    <ul><!-- each:uncertain --><li>{{v}}</li><!-- /each:uncertain --></ul>
+  </div>
+  <!-- /if:uncertain -->
+
+  <!-- if:tags -->
+  <div class="tags"><!-- each:tags --><span>{{v}}</span><!-- /each:tags --></div>
+  <!-- /if:tags -->
+
+  <footer>
+    <div class="r"><span>{{group_label}}</span><span>{{date_label}}</span></div>
+    <!-- if:biogeo --><div class="r"><span>生物地理界</span><span>{{biogeo}}</span></div><!-- /if:biogeo -->
+    <div class="r"><span>事实锚</span><span>{{source}}</span></div>
+    <div class="r"><span>往期</span><span><a href="{{archive_rel}}">归档索引</a></span></div>
+  </footer>
+
+</div>
+</body>
+</html>
