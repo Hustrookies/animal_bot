@@ -928,28 +928,72 @@ stage 状态机与 wiki-bot 完全一致：`none → content → imaged → rend
 cron 窗口**与 wiki-bot 错开**（wiki-bot 占 07:03/07:38/07:47/07:52）：
 
 ```
-5  8 * * *   /opt/animal/run.sh daily
-40 8 * * *   /opt/animal/run.sh notify
-49 8 * * *   /opt/animal/run.sh daily     # 补跑
-54 8 * * *   /opt/animal/run.sh notify
-23 3 2 * *   /opt/animal/run.sh refill    # 月度补池，与 wiki-bot 的 1 号错开
+5  8 * * *   /opt/animal/run.sh daily   >/dev/null 2>>/opt/animal/logs/cron.log
+40 8 * * *   /opt/animal/run.sh notify  >/dev/null 2>>/opt/animal/logs/cron.log
+49 8 * * *   /opt/animal/run.sh daily   >/dev/null 2>>/opt/animal/logs/cron.log   # 补跑
+54 8 * * *   /opt/animal/run.sh notify  >/dev/null 2>>/opt/animal/logs/cron.log
+23 3 2 * *   /opt/animal/run.sh refill  >/dev/null 2>>/opt/animal/logs/cron.log   # 月度补池，与 wiki-bot 的 1 号错开
 ```
+
+**stdout 丢掉、stderr 留档**（wiki-bot 是 `2>&1` 一起丢）：stdout 已由 `run.sh` 自己 tee 进
+`logs/<date>.log`，重复没必要；而 stderr 才装着真正需要人看的东西 —— `wait_live` 的末次
+HTTP 码、python traceback、`command not found`。`logs/cron.log` 正常情况下应当是空文件，
+一有内容就说明出过事。
+
+`CRON_TZ=Asia/Shanghai` 在 wiki-bot 那一段已声明，对其后所有行生效。
+本机 cron 的 PATH 实测为 `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:...`，**含
+`/usr/local/bin`**（`openclaw` 装在那里），所以不必在 crontab 里显式声明 PATH；换机器部署
+时要重新验这一条 —— "手动跑一切正常、cron 里 agent 那步 command not found"是这类项目最
+常见的首日故障。
 
 `daily` 与 `notify` 分开的理由同 wiki-bot：Pages 构建有 30s–2min 延迟，分两个窗口后
 这个竞态结构性消失。
 
-`run.sh` 另有两个 mode：`once` = `daily` + `verify`（联调用），`verify` = 0 token 本地
-终检。**终检是独立一步，不是每步 exit 0 的累加** —— 每一步自己都会报成功（render 打印
-`rendered`、publish 打印 `push ok`），拼起来仍然可能是错的：模板改了没重渲、jsonl 追了
-两行、commit 了但没推。verify 查四项：页面存在且含本期 buildid、`data/content/<date>.json`
-在（否则日后换模板无法 0 token 重渲）、posts.jsonl 恰好一行且合契约、git 无未提交且无未推。
+`run.sh` 另有三个 mode：`once` = `daily` + `verify` + `notify`（联调用），`verify` = 0 token
+本地终检，`notify` = 等 Pages 生效 + 推微信（0 token，可反复跑）。**终检是独立一步，不是每步
+exit 0 的累加** —— 每一步自己都会报成功（render 打印 `rendered`、publish 打印 `push ok`），
+拼起来仍然可能是错的：模板改了没重渲、jsonl 追了两行、commit 了但没推。verify 查四项：
+页面存在且含本期 buildid、`data/content/<date>.json` 在（否则日后换模板无法 0 token 重渲）、
+posts.jsonl 恰好一行且合契约、git 无未提交且无未推。
 
 其中**数 posts.jsonl 的原始行数、不走 `lib.load_posts()`**：后者按 `(date,subject)` 去重，
 重复追加的那一行会被它悄悄合掉 —— 而重复追加正是这里要查的东西。用去重后的视图验幂等，
 等于拿一块滤镜去找它专门滤掉的脏东西。
 
-`notify` 在阶段 9 明确 `exit 2`，不静默走空。让 `once` 假装通知过是最糟的形态：
-cron 会每天安静地"成功"，而没有一条消息发出去。
+`once` 里 **verify 红也照发通知**：notify 会亲自探线上页面，探不到自然发降级消息；
+反过来"终检红就不通知"会让用户在真出问题的那天什么都收不到，那是最糟的组合。
+
+### 10.1 通知的消息等级（阶段 10 落地）
+
+`notify` 发四种消息，`state/<date>.notified` 记 `kind buildid`：
+
+| kind | 何时 | 内容 |
+|---|---|---|
+| `ok` | wait_live 判 LIVE | 标题 + 物种/学名/IUCN + summary + 读全文链接 |
+| `degraded` | STALE / NOT_FOUND | 同上，链接标注"页面生成中" |
+| `nolink` | stage 停在 rendered（push 没成） | 同上，无链接 |
+| `relive` | 先发过 degraded/nolink，页面后来好了 | 一行短消息 + 链接 |
+
+等级 `nolink(1) < degraded(2) < ok(3) = relive(3)`，**只许升级，不许降级或重复**。
+这是为了避开 wiki-bot 的一个缺陷：它的 `.notified` 只看文件**是否存在**，于是 Pages 慢过
+5 分钟预算的那天，第一个窗口发出"页面生成中"、stage 置 notified，兜底窗口直接跳过 ——
+页面 6 分钟后真的好了，用户手里却永远只剩那条"生成中"，而链接其实早就能点。
+每天最多因此多一条（relive 是终态），有界。
+
+判断做**两道**：`run.sh` 读 `.notified` 的 kind 决定要不要再探，`notify.sh` 自己再按等级
+拦一次 —— 与 stage/cached 那两道同构，run.sh 判漏了这里仍然发不出重复消息。
+
+正文一律读 `data/content/<date>.json`（按日期存档的那份），**不读根目录 `content.json`**：
+后者是"agent 最近一次写的"，补发历史日期时它是别人家的内容，会发出一条链接指向 9/2、
+正文却是 9/3 的消息，而两半各自都"没错"。`group_label` 同理不从 `pick.json` 取。
+
+IUCN 中文标签**复用 `render.py` 的那张表**，不在 notify 里重写第二份 —— 两处各写一份，
+改了一处就会出现"页面写濒危、消息写易危"，而两边各自都自洽。
+
+`.env` 的读取统一走 `envload.sh`（三个脚本共用）：**不覆盖已在环境里的变量**。
+阶段 9 已被咬过一次（`IMG_ON=0` 被 `.env` 盖回 1，第一次联调就真计费而日志全绿）；
+到 notify 这边后果更难收拾 —— `WEIXIN_TARGET=测试群 ./notify.sh` 若不生效就会静默发到
+真实接收人，而消息发错人是撤不回来的。
 
 
 ---
@@ -958,7 +1002,9 @@ cron 会每天安静地"成功"，而没有一条消息发出去。
 
 ```
 /opt/animal/
-  run.sh  publish.sh  refill-prompt.md  prompt.md  template.html  SPEC.md
+  run.sh  publish.sh  notify.sh  wait_live.sh  envload.sh
+  refill-prompt.md  prompt.md  template.html  SPEC.md
+  .nojekyll  index.html                   # 见下：Jekyll 与根路径
   src/    lib.py  import-gbif.py  refine-candidates.py  taxon-check.py
           wikitext.py  build-queue.py  refill-check.py
           pick.py  selfcheck.py  render.py  gen-image.py  fetch-material.py
@@ -967,9 +1013,18 @@ cron 会每天安静地"成功"，而没有一条消息发出去。
   data/   queue.tsv  ready.jsonl  posts.jsonl  material.json  content/
           candidates.jsonl  pool.jsonl  blacklist.txt  whitelist.txt
           generic-names.txt  rejected.tsv  anchor-rejected.tsv
-  docs/   index.html  archive.html  p/  img/
+  docs/   index.html  archive.html  p/  img/  .nojekyll
   state/  logs/  .cache/  .env  img_urls.jsonl
 ```
+
+`envload.sh` 被 `run.sh` / `notify.sh` / `publish.sh` 共同 source，**三者对 `.env` 的语义
+必须一致**：只要有一个用了 `set -a; . ./.env; set +a`，那个脚本里命令行传的值就会被 `.env`
+盖回去，而它看起来完全正常（§10.1 末段记了两次代价）。
+
+`.nojekyll` 放**两处**：根目录那份对当前配置生效（Pages 发布源是仓库根），`docs/` 那份
+等 Source 改成 `/docs` 之后生效。没有它，正文里万一出现 `{{` 或 `{%`，Liquid 会让整站
+构建失败 —— 而那时所有页面都停在旧版本，`wait_live` 会判 STALE。根 `index.html` 是个到
+`docs/` 的重定向：加了 `.nojekyll` 之后 Jekyll 不再拿 README 生成首页，没有它根路径是 404。
 
 **发布拆成两个文件，是为了让脆的那一半能跑用例。** wiki-bot 把追加 posts.jsonl 的逻辑
 写成 `publish.sh` 里的 python heredoc —— 那样写有一个具体后果：**它永远跑不了用例**，
@@ -1035,7 +1090,7 @@ openclaw agent --agent animal --message-file <prompt 文件>
 | 7 | `gen-image.py --dry-run` | prompt 含学名与近似种负向词。**实测 18 条用例全绿**，并查出 §8.1 风格表本身是错的（类群风格里混着姿态与背景，与主图的生境描述打架）、近似种只能做到同属（40%）、硬约束 3 此前只有注释没有检查 —— 详见 §12.7。这一阶段的价值全在 `--dry-run`：不花一分钱，把每天都会发生的缺陷看出来了 |
 | 8 | `render.py` + 模板 | 页面含 AI 标注；`data/content/*.json` 可 0 token 重渲。**实测 25 条用例全绿**，3 期归档件 `--rebuild-all` 通过。查出的三件事都是**参照物本身的错**：wiki-bot 那条重渲能力今天没有任何命令能做到、模板说明注释会原样发到公网、buildid 漏掉模板 —— 详见 §9b 与 §12.8 |
 | 9 | 全链路 `run.sh daily` / `once` / `verify` + `publish.sh` + `src/publish.py` | 端到端出一期，检查 stage 流转与幂等。**实测通过**：`none→content→imaged→rendered→pushed` 一次跑通（2 分 09 秒），第二次全程跳过；真出图后连跑三次 `main=cached sub=cached`、图片 md5 不变、`img_urls.jsonl` 不增行、posts.jsonl 仍 1 行、后两次 git 跳空 commit。查出四件事：buildid 掺了出图状态（§9b.2）、`gen-image.py` 有一整块重复定义、`.env` 会把命令行传的 `IMG_ON=0` 盖回 1、`img_urls.jsonl` 规格里说要 gitignore 而实现漏了 —— 详见 §12.9 |
-| 10 | 挂 cron + 通知 | 观察 3 天 |
+| 10 | 挂 cron + 通知 | **已完成**：`notify.sh`/`wait_live.sh`/`envload.sh` 落地，5 条 cron 已挂，9/2 这期真推到微信（Message ID 已回）。查出四个缺陷，两个是照抄 wiki 时抄进来的（§12.10）。观察 3 天中 |
 
 ### 12.6 阶段 6 实测：两个产出互为契约，风险在"对不上"
 
@@ -1233,7 +1288,59 @@ sub=cached`，图片 md5 逐字节不变，`img_urls.jsonl` 保持 2 行，posts
 
 ---
 
+### 12.10 阶段 10 实测：四个缺陷，两个是照抄参照物时抄进来的
+
+触发点是用户的一句话：**"为什么我微信没收到推送？"** 当时的真实状态是通知整块还没写
+（`notify` 明确 `exit 2`）、cron 一条没挂、`.env` 里连推送凭证都没有 —— 但顺着这句话查下去，
+在真跑第一次 `notify` 的 30 秒里连撞出四个缺陷。
+
+**① Pages 的发布源是仓库根，不是 `/docs` —— 线上真实路径多一段 `/docs`。**
+`PAGE_BASE` 拼出来的 `/animal_bot/p/2026-09-02.html` 是 404，而 `/animal_bot/docs/p/...`
+才是 200。根路径 200 是 Jekyll 拿 README 生成的默认页，它让"站点是好的"这个印象很有说服力。
+阶段 9 的 verify 查不出这个 —— 它是**本地**终检，四项全绿说的是"本地产物自洽且已推送"，
+与"线上那个 URL 能不能打开"是两件事。这也正是 `wait_live` 存在的理由：它是唯一会去点那个
+链接的一步。修法：`PAGE_BASE` 加 `/docs`（PAT 没有 Pages:write 权限，API 改不了，403）。
+
+**② `wait_live` 把 404 报成"本机断网" —— 而那条路径既不发消息也不发告警，完全静默。**
+照抄 wiki-bot 的 `curl -fsS`：`-f` 让 HTTP 404 也返回失败（exit 22），于是"页面还没上线"
+被计入 `NETFAIL`，累加 6 次判 `NET_DOWN`。而 `NET_DOWN` 的处置是"本机出网有问题，此时
+微信大概也发不出去"→ 只 log、不发内容、不发告警。两者混在一起的后果：**Pages 目录配错的
+那些天一条消息、一条告警都没有。** 第一次真跑的日志原文就是
+`wait_live → NET_DOWN`，把一个配置问题伪装成断网。
+修法：不用 `-f`，改看 `http_code` —— `000` 或 curl 自身失败才算网络问题，404/5xx 只是
+"还没好"；并把末次 HTTP 码打到 stderr。**如果第一次跑就打印"末次 HTTP 404"，这个问题
+本来根本不需要查。**
+
+**③ `curl … | grep -q` 在 `pipefail` 下必然失败 —— 复核步骤每天白等 45 秒且形同虚设。**
+`grep -q` 命中即退出并关闭管道，curl 写入失败返回 23，`set -o pipefail` 把它变成整个管道
+失败。于是"复核用户真正会点的干净 URL"这一步**永远判不通过**，稳定输出
+`LIVE_DIRTY_CACHE`。实测：同一个 URL 同一个 marker，管道版 rc=23，落文件版 rc=0。
+它没有任何可见症状 —— `LIVE` 与 `LIVE_DIRTY_CACHE` 在 `run.sh` 里走同一分支、都发正式
+消息，所以"干净 URL 命中旧缓存"这个它专门要防的问题**从来没有被真正检测过**，同时每天
+多等 45 秒。修法：落文件再 grep。
+
+**④ stage 机漏了 `notified`，agent 会重跑一遍。**
+阶段 9 的分流表是 `content|imaged|rendered|pushed`。加上 `notified` 这一级之后，08:40 通知
+发完、08:49 的补跑窗口进来会认为"今天还没出稿"→ agent 重写一篇、覆盖 `content.json`、
+两张图重出 —— **白花两份钱，而日志一路全绿**。这是本项目第二次遇到"枚举漏项导致判据
+整体失效"（上次是闸门枚举漏项放行 `Homo sapiens`）。
+
+**四个之中三个的共同形状：它们都不让任何一步失败。**
+①的每一步都报成功、②在日志里给出一个看似合理的错误原因、③连日志都是正常的。能撞上它们
+只因为这次是"带着一个具体问题（为什么没收到）去跑"，而不是"跑通了就算过"。
+
+**②③是照抄 wiki-bot 时抄进来的**，与阶段 8 那次同一形态（三个缺陷全在参照物本身）。
+参照物能正常工作，不等于它的每一段判据都是对的 —— wiki-bot 的通知天天能收到，恰恰是因为
+②③的后果都被"另一条路径正好也发消息"掩盖着。**抄一段代码，就要把它的判据重验一遍。**
+
+顺带落地的两件小事：`.nojekyll`（根 + `docs/`）—— 正文里万一出现 `{{` 或 `{%`，Liquid
+会让**整站构建失败**；根 `index.html` 补一个到 `docs/` 的重定向，因为加了 `.nojekyll`
+之后 Jekyll 不再拿 README 生成首页。
+
+---
+
 ## 13. 已知风险与未决项
+
 
 1. **约束 ③ 靠黑名单兜底**（§0/§5.3）。黑名单未收录的统称会漏进池，发现一个补一个。
    不要尝试用 `numDescendants` 或字数等数值判据代替——§0 已用 300 条实测证明那会误伤
@@ -1300,6 +1407,18 @@ sub=cached`，图片 md5 逐字节不变，`img_urls.jsonl` 保持 2 行，posts
     `dl_not_an_image` 这些路径都会写回 `file: ""`。渲染侧若写成
     `art.main.get("file", "默认图")`，空串会**绕过默认值**拿到一个 `src=""` ——
     页面裂图而日志全绿。阶段 8 取图必须判真值而不是判键存在。
+13. **`PAGE_BASE` 与 GitHub Pages 的 Source 目录是一对必须同时改的耦合**（阶段 10 实测）。
+    当前 Source 是仓库根，所以 `PAGE_BASE` 末尾带 `/docs`。**建议在 Settings → Pages 把
+    Source 目录改成 `/docs`**：改完之后 URL 少一段、根路径直接是当天页面、与 wiki-bot 对齐，
+    同时 `PAGE_BASE` 必须同步去掉 `/docs`，否则会变成 `/docs/docs/`。
+    这一步只能人工做 —— PAT 没有 Pages:write 权限（`PUT /repos/../pages` 返回 403
+    `Resource not accessible by personal access token`）。
+    改之前不要动 `PAGE_BASE`：两处不一致的表现是 `wait_live` 判 NOT_FOUND、每天发降级消息，
+    而页面其实完全正常。
+14. **`logs/cron.log` 只收 stderr，正常应为空文件。** 它不参与 `find logs -mtime +14 -delete`
+    的日常轮转判断（一直在写就不会被删），但**没有人会主动去看它** —— 观察期结束后应当
+    确认它是空的；若有内容，里面装的是 cron 环境下才会暴露的问题（PATH、权限、tty）。
+
 
 
 

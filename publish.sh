@@ -14,7 +14,7 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT" || exit 1
-[ -f .env ] && { set -a; . ./.env; set +a; }
+[ -f .env ] && . ./envload.sh    # 与 run.sh / notify.sh 同一套语义：不覆盖已有环境变量
 
 BR="${GIT_BRANCH:-main}"
 

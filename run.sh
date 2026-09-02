@@ -2,37 +2,19 @@
 # animal-bot 流水线入口。0 token 的状态机，只有 openclaw 那一步花 token。
 #
 #   ./run.sh daily             取题 → agent 写稿 → 校验 → 配图 → 渲染 → 发布（不通知）
-#   ./run.sh once              daily + 本地终检（verify）
+#   ./run.sh notify            等 Pages 生效 → 推微信（0 token，可反复跑）
+#   ./run.sh once              daily + verify + notify
 #   ./run.sh verify            0 token 终检：页面/buildid/jsonl/git 四项对齐
 #   ./run.sh refill            逐类群分批补 queue.tsv
 #   REFILL_ONLY=aves ./run.sh refill    # 只补一个类群（联调）
 #
-# notify 待阶段 10（notify.sh + wait_live.sh 还没写）。**它明确 exit 2，不静默走空。**
-# 让 once 假装通知过是最糟的形态：cron 会每天安静地"成功"，而没有一条消息发出去。
-#
 # stage 状态机（state/<date>.stage）：
-#   none → content → imaged → rendered → pushed
+#   none → content → imaged → rendered → pushed → notified
 # 重复执行按 stage 分流，已完成直接 exit 0 —— 这是四个 cron 补跑窗口能安全存在的前提，
 # 也是「连跑两次不重复计费」的实现方式（配图那一步还有第二道：文件已存在则 cached）。
 set -uo pipefail
 cd "$(dirname "$0")" || exit 1
-# 读 .env，但**不覆盖已经在环境里的变量** —— `IMG_ON=0 ./run.sh daily` 必须真的关掉
-# 出图。原来是 `set -a; . ./.env; set +a`，那样 .env 里的 IMG_ON=1 会把命令行传的 0
-# 盖回去，也就是说 .env 里"联调请一律用 IMG_ON=0"这句话本身是假的：第一次联调就会
-# 真计费，而日志看起来一切正常。
-# （`set -a` 那半是必须留的：不 export 的话 IMG_API_KEY 只是个 shell 变量，
-#  python 的 os.environ 看不见，失败方式是 gen-image 报 no_key 而 .env 明明配好了。）
-if [ -f .env ]; then
-  _line=""      # set -u 下必须先初始化：.env 为空文件时 read 直接失败，下面那个 -n 会报未绑定
-  while IFS= read -r _line || [ -n "$_line" ]; do
-    case "$_line" in ''|'#'*) continue ;; esac
-    _k=${_line%%=*}; _v=${_line#*=}
-    case "$_k" in *[!A-Za-z0-9_]*|'') continue ;; esac   # 不是合法变量名的行直接跳过
-    [ -n "${!_k+x}" ] && continue
-    export "$_k=$_v"
-  done < .env
-  unset _line _k _v
-fi
+. ./envload.sh    # 读 .env 但不覆盖已有环境变量；理由写在 envload.sh 里（阶段 9 被咬过一次）
 export TZ="${TZN:-Asia/Shanghai}"
 
 MODE="${1:-}"
@@ -41,7 +23,25 @@ mkdir -p logs data state docs/p data/content
 LOG="logs/$(date +%F).log"
 ST="state/$TODAY.stage"
 log() { printf '%s %s\n' "$(date +%H:%M:%S)" "$*" | tee -a "$LOG"; }
-alert() { log "[ALERT $1] $2"; }     # 通知通道待阶段 10，先只落日志
+# 告警：落日志 + 推微信，按 key 限流。
+# 上限是 **2 而不是 1**：第一条是"今天出问题了"，第二条是"兜底窗口重跑仍然失败"——
+# 后者才是真正需要人动手的信号。只发一条的话，"重跑也没救回来"这件事会完全静默，
+# 而那正是最需要知道的一天。
+ALERT_MAX="${ALERT_MAX:-2}"
+alert() {
+  local key="$1" msg="$2" f n=0
+  f="state/$TODAY.alert.$key"
+  log "[ALERT $key] $msg"
+  [ -f "$f" ] && n=$(cat "$f" 2>/dev/null || echo 0)
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  if [ "$n" -ge "$ALERT_MAX" ]; then
+    log "[ALERT $key] 已达上限 $ALERT_MAX，本条只落日志"; return 0
+  fi
+  printf '%s\n' "$((n+1))" > "$f"
+  # 告警推送失败**不能**让主流程挂掉：告警是附加动作，日志里已经留下了。
+  ./notify.sh --kind alert --text "⚠️ animal-bot $TODAY：$msg" >>"$LOG" 2>&1 \
+    || log "[ALERT $key] 告警推送失败（内容已在日志里）"
+}
 stage() { cat "$ST" 2>/dev/null || echo none; }
 set_stage() { printf '%s\n' "$1" > "$ST.tmp" && mv -f "$ST.tmp" "$ST"; }  # 原子，防 kill -9 截断
 
@@ -148,12 +148,71 @@ if [ "$MODE" = verify ]; then
   verify "${2:-$TODAY}"; exit $?
 fi
 
-# ---------------------------------------------------------------- notify（阶段 10）
+# ---------------------------------------------------------------- notify（0 token）
+# 等 Pages 生效 → 推微信。可反复跑，用法 `./run.sh notify [date]`。
+#
+# **不加 lock。** daily 那把锁要持两分钟以上（agent 写稿），notify 若因为拿不到锁就
+# 静默 exit 0，那个窗口就白费了 —— 而它只发 GET 和一条消息，没有并发危险。防重复靠
+# stage 加 notify.sh 里的等级判断，不靠锁。
 if [ "$MODE" = notify ]; then
-  # **明确 exit 2，不静默走空。** notify.sh / wait_live.sh 属阶段 10；此刻若让它
-  # 假装通知过，cron 会每天安静地"成功"而没有一条消息发出去 —— 那是最糟的失败形态。
-  log "notify 未实现（notify.sh / wait_live.sh 属 SPEC §12 阶段 10）"
-  exit 2
+  D="${2:-$TODAY}"
+  ST="state/$D.stage"        # 允许补发历史日期：stage()/set_stage 都读这个变量
+  log "=== run.sh notify start (stage=$(stage), date=$D) ==="
+
+  # 上一轮通知发的是哪一种 —— 这决定还要不要再探：
+  #   ok / relive        终态，用户手里已经有一条带好链接的消息 → 什么都不做
+  #   degraded / nolink  当时页面确实没好 → 允许再探，好了就补一条短消息（relive）
+  # wiki-bot 只看 .notified 文件**是否存在**，于是"Pages 慢了 6 分钟"那天用户永远
+  # 只剩那条"页面生成中"，而链接其实早就能点了 —— 兜底窗口存在却什么都救不了。
+  PREVK=""
+  [ -f "state/$D.notified" ] && PREVK=$(cut -d' ' -f1 < "state/$D.notified")
+  case "$PREVK" in
+    ok|relive) log "notify: $D 已通知（$PREVK），跳过"; exit 0 ;;
+  esac
+
+  case "$(stage)" in
+    none|content|imaged)
+      # 还没渲染 → 没有页面也没有 buildid。此刻能发的只有告警，不是内容；
+      # 而"今天没出稿"这件事由 daily 自己的 alert 负责，这里安静退出就好。
+      log "notify: $D 尚未渲染（stage=$(stage)），无可通知内容"; exit 0 ;;
+  esac
+
+  BID=$(cat "state/$D.buildid" 2>/dev/null || echo "")
+  # 没有 buildid 就无法判断线上那一页是不是**这一期** —— 只查 200 会让昨天的页面
+  # 把今天的构建失败盖过去。宁可报错也不发一条无法核实的消息。
+  [ -n "$BID" ] || { log "notify: 缺 state/$D.buildid，无法确认线上是不是这一期"; exit 1; }
+
+  if [ "$(stage)" = rendered ]; then
+    # 渲染成功但 push 没成 → 正文照发，只是没有链接。内容比链接重要：
+    # 消息本身就是一张完整卡片，这是「超时也推」的同一个理由。
+    ./notify.sh --kind nolink --date "$D" && set_stage notified
+    exit 0
+  fi
+
+  URL="${PAGE_BASE%/}/p/$D.html"
+  RES=$(./wait_live.sh "$URL" "$BID" "${WAIT_BUDGET:-300}"); rc=$?
+  log "wait_live → $RES (rc=$rc)"
+  case "$RES" in
+    LIVE|LIVE_DIRTY_CACHE)
+      case "$PREVK" in
+        degraded|nolink) ./notify.sh --kind relive --date "$D" && set_stage notified ;;
+        *)               ./notify.sh --kind ok     --date "$D" && set_stage notified ;;
+      esac ;;
+    STALE|NOT_FOUND)
+      if [ -n "$PREVK" ]; then
+        # 已经发过降级消息了，第二条一样的没有信息量 —— 但"重跑仍未生效"要进告警，
+        # 那才是需要人去看 Pages 构建日志的信号（ALERT_MAX=2 正是为这一条留的额度）。
+        log "notify: $D 仍未生效（$RES），已发过 $PREVK，不重复发内容"
+        alert pages "页面重跑仍未生效（$RES），上一条消息是 $PREVK，请查 Pages 构建"
+      else
+        ./notify.sh --kind degraded --date "$D" && set_stage notified
+        alert pages "页面未生效（$RES），已发降级消息（正文完整，链接可能还要等）"
+      fi ;;
+    NET_DOWN)
+      # 本机出网就有问题，此时微信大概也发不出去。**不置 notified**，留给下个窗口。
+      log "notify: 本机出网异常，不通知，留待下个窗口重试"; exit 2 ;;
+  esac
+  exit 0
 fi
 
 # ---------------------------------------------------------------- refill
@@ -255,7 +314,7 @@ fi
 
 # ---------------------------------------------------------------- daily / once
 [ "$MODE" = daily ] || [ "$MODE" = once ] || {
-  echo "用法: $0 daily|once|verify [date]|refill|notify(阶段10)" >&2; exit 2; }
+  echo "用法: $0 daily|once|notify [date]|verify [date]|refill" >&2; exit 2; }
 
 lock
 log "=== run.sh $MODE start (stage=$(stage)) ==="
@@ -263,9 +322,12 @@ log "=== run.sh $MODE start (stage=$(stage)) ==="
 # stage 分流。**这就是「连跑两次不重复计费」的第一道**：第二次进来 stage 已是 pushed，
 # 下面每个 if 都不成立，agent、出图、渲染、发布全部跳过。第二道在 gen-image.py 内部
 # （文件已存在则 cached），两道都要有 —— state/ 被清掉过的那天只剩第二道兜着。
+# **notified 必须在这张表里。** 漏了它，通知发完之后再跑 daily（08:49 那个补跑窗口就会）
+# 会当成"今天还没出稿"，agent 重写一篇、覆盖 content.json、图重出一遍 —— 白花两份钱，
+# 而日志一路全绿。
 case "$(stage)" in
-  content|imaged|rendered|pushed) SKIP_AGENT=1 ;;
-  *)                              SKIP_AGENT=0 ;;
+  content|imaged|rendered|pushed|notified) SKIP_AGENT=1 ;;
+  *)                                       SKIP_AGENT=0 ;;
 esac
 
 if [ "$SKIP_AGENT" = 0 ]; then
@@ -341,7 +403,15 @@ fi
 log "=== $MODE 完成 stage=$(stage) ==="
 
 RC=0
-[ "$MODE" = once ] && { verify "$TODAY" || RC=1; }
+if [ "$MODE" = once ]; then
+  verify "$TODAY" || { RC=1
+    alert verify "终检未通过，详见日志（通知照发，由 wait_live 决定是正式消息还是降级）"; }
+  # 通知是独立一步，不因终检红就跳过 —— notify 会亲自探线上页面，探不到自然发降级消息。
+  # 反过来"终检红就不通知"会让用户在真出问题的那天什么都收不到，那是最糟的组合。
+  # 先放锁再调：notify 里的 wait_live 最多等 5 分钟，握着锁等会让下一个补跑窗口白跳过。
+  flock -u 9
+  ./run.sh notify "$TODAY" || RC=1
+fi
 
 # 队列低水位自愈：月度 refill 漏了也不断供。判据用 pick.py 的 low（= 任一类群见底
 # 或全池见底），不是只看全池 —— 单类群饥饿会被全池阈值整个漏掉（probe/simulate.py
