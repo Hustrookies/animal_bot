@@ -27,6 +27,13 @@ content.json
 # 每日阶段/通知/构建标记。
 state/
 
+# 出图请求流水（date/kind/url/prompt）。SPEC §11 早就写了它该被忽略，实现时漏了 ——
+# 阶段 9 装 publish.sh 的时候才发现它以未跟踪文件的形式长期挂在 git status 里。
+# 不入库的理由：URL 是带签名的临时地址，几小时后就失效，入库只留一堆过期串。
+# **但本机这份要留着**：物种画错是本项目最主要的失败模式，事后追查唯一有用的证据
+# 就是「当时到底把什么 prompt 发出去了」，而那只在这个文件里。
+img_urls.jsonl
+
 # openclaw agent 在 workspace 里自动生成的引导文件与运行状态。
 # 都是默认模板（IDENTITY.md 里还写着"Fill this in during your first conversation"），
 # 不是本项目的配置 —— wiki-bot 的 .gitignore 也是这么处理的。

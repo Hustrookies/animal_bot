@@ -348,41 +348,6 @@ def apply_result(content, kind, rel, st):
     """把一次出图结果写回 content。返回是否有变化。
 
     **抽成独立函数只为一件事：让硬约束 3 可被用例验证。** 那条约束（只准新增
-    art.*.file / art.*.status，不得动任何其它字段）本来只写在 docstring 里 ——
-    而它是整个脚本与 selfcheck.py 信任边界的分界线：selfcheck 放行的是内容，
-    本脚本若顺手改了正文或 subject，等于绕过闸门发布未校验的内容。
-    部署侧实测时我用 md5 去验，结果 md5 必然变（status 本就该写），
-    说明**光有 docstring 的约束等于没有约束** —— 现在由 selftest 逐键比对。
-    """
-    node = content.get("art", {}).get(kind)
-    if not isinstance(node, dict):
-        return False
-    if node.get("file") == rel and node.get("status") == st:
-        return False
-    node["file"], node["status"] = rel, st
-    return True
-
-
-def flat(o, p=""):
-    """把嵌套 dict/list 摊平成 {点分路径: 标量}。只服务于下面那条硬约束检查。"""
-    if isinstance(o, dict):
-        for k, v in o.items():
-            yield from flat(v, p + "." + k)
-    elif isinstance(o, list):
-        for i, v in enumerate(o):
-            yield from flat(v, "%s[%d]" % (p, i))
-    else:
-        yield p, o
-
-
-# 硬约束 3 允许本脚本写的**全部**键，一个不多。
-WRITABLE = {".art.main.file", ".art.main.status", ".art.sub.file", ".art.sub.status"}
-
-
-def apply_result(content, kind, rel, st):
-    """把一次出图结果写回 content。返回是否有变化。
-
-    **抽成独立函数只为一件事：让硬约束 3 可被用例验证。** 那条约束（只准新增
     art.*.file / art.*.status，不得动其它字段）本来只写在模块 docstring 里 ——
     而它正是本脚本与 selfcheck.py 之间信任边界的分界线：selfcheck 放行的是内容，
     本脚本若顺手改了正文或 subject，等于绕过闸门发布未校验的内容。

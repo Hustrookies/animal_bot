@@ -840,6 +840,20 @@ content 时，把 CSS 的 `max-width:640px` 改成 641 重渲，页面确实变�
 会把整次模板更新跳过。**页面 = 内容 + 模板，签名就该覆盖两者。**
 这条对 wiki-bot 同样成立。
 
+**反过来也要成立：页面没变时签名不许变。** 阶段 9 实测撞出来的 —— 同一期连跑两次
+`daily`，第二次出图全部 `cached`、图和文一个字节没变，buildid 却从 `a25ddb71` 变成了
+`643ca3a3`。根因是 `gen-image.py` 把「这次是怎么拿到图的」写回了 content.json
+（`ok_8090kb_webp_306kb` → `cached`），而 buildid 哈希了整个 content。而 `render.py`
+从头到尾只读 `art.*.file` 与 `art.*.alt`，**status 一次都没进过页面**。
+
+后果比"每天多一次 git diff"重：posts.jsonl 里的 buildid 是首发时记下的，幂等跳过追加
+之后不会更新，于是阶段 10 的 `wait_live` 会拿着一个**谁都不等于**的值去比线上页面 ——
+每天判 STALE、每天发降级消息，而页面其实完全正常。所以 `page_buildid` 先过
+`_signed_content()` 剔掉 `art.*.status`，并用两条互补用例钉住：**页面确实不含
+status**（否则剔掉它就是撒谎），**签名也不含**；再加一条反面 —— 换了 `art.*.file` 则
+buildid 必须变（图是页面真依赖的）。修完连跑三次，buildid 三次相同，git 两次跳空。
+
+
 ### 9b.3 不做 themes/，但要剥注释
 
 7 个类群版式完全一样，差异只有主题色（`lib.THEME_COLOR`），所以 CSS 直接写在
@@ -878,13 +892,31 @@ span 不输出，并补了第 25 条用例（`class="c"` 不得出现）。
 - **学名排斜体、紧跟中文名。** 它是读者核对物种身份的唯一凭据（AI 图会画错，
   §13.2），归档页也列出学名 —— 那里是发现"两期其实是同一个种"最容易的地方。
 
-### 9b.6 posts.jsonl 的字段契约（留给阶段 9）
+### 9b.6 posts.jsonl 的字段契约（阶段 9 已落地：`lib.POST_FIELDS`）
 
-归档页用 `POSTS_FIELDS = date / group_label / title / scientific_name / summary`。
-前四个里 `date`、`subject`、`scientific_name`、`title`、`summary` 已由 `pick.py` 在用，
-但 **`group_label` 今天还没有任何写入方** —— `publish.sh` 是阶段 9 的事。
-写成常量并配用例，是为了让阶段 9 有个明确的对象可核；本项目已经栽过两次
-「取字段不核键名」（`iucn_raw`、`pick.py` 拿 `wiki` 当键查 material）。
+归档页用 `render.POSTS_FIELDS = date / group_label / title / scientific_name / summary`，
+它是 **`lib.POST_FIELDS`（10 键）的子集** —— 后者是唯一的定义处，`publish.py` 拿它断言、
+`render.py` 拿子集验归档页，`publish.py --selftest` 用 `importlib` **真的 import
+render.py** 去比这个子集关系。复制一份常量就是"两处对不上"的起点，而那条用例存在的
+全部意义正是防这件事。
+
+单独立一张可断言的表（而不是写注释），理由是**少一个键的后果全都不是崩，而是静默降级**：
+
+| 缺的键 | 症状 |
+|---|---|
+| `scientific_name` | `pick.py` 的 `used_sci` 与同属冷却双双失效，中文名换个写法（美洲狮／山狮）半年内能再推一次，**日志全绿** |
+| `entities` | `lib.sim` 的实体重叠恒为 0，那是去重主信号，软重复再也拦不住 |
+| `group_label` | 归档页每行类群标签空着（§9b.4 那次空壳就是它） |
+
+**空值等于缺键。** `scientific_name: ""` 对 `pick.py` 的伤害与没有这个键完全一样
+（`used_sci` 里多一个空串，什么都拦不住），而它**更难看出来** —— 键在，grep 得到，
+人就以为没问题。所以 `post_defects()` 把空串和空列表一律算违反。
+
+`group_label` 的写入方是 `src/publish.py` 的 `build_record()`。身份字段（`subject` /
+`scientific_name` / `date` / `group`）**一律取 content.json，不取 pick.json**：
+`selfcheck.py` 已逐字校验过两者一致，而 pick.json 每天被重写 —— 补跑窗口跑到 publish
+时它可能已经是下一天的了。同一个事实有两个来源，就一定会有对不上的那天。
+
 
 ---
 
@@ -906,23 +938,45 @@ cron 窗口**与 wiki-bot 错开**（wiki-bot 占 07:03/07:38/07:47/07:52）：
 `daily` 与 `notify` 分开的理由同 wiki-bot：Pages 构建有 30s–2min 延迟，分两个窗口后
 这个竞态结构性消失。
 
+`run.sh` 另有两个 mode：`once` = `daily` + `verify`（联调用），`verify` = 0 token 本地
+终检。**终检是独立一步，不是每步 exit 0 的累加** —— 每一步自己都会报成功（render 打印
+`rendered`、publish 打印 `push ok`），拼起来仍然可能是错的：模板改了没重渲、jsonl 追了
+两行、commit 了但没推。verify 查四项：页面存在且含本期 buildid、`data/content/<date>.json`
+在（否则日后换模板无法 0 token 重渲）、posts.jsonl 恰好一行且合契约、git 无未提交且无未推。
+
+其中**数 posts.jsonl 的原始行数、不走 `lib.load_posts()`**：后者按 `(date,subject)` 去重，
+重复追加的那一行会被它悄悄合掉 —— 而重复追加正是这里要查的东西。用去重后的视图验幂等，
+等于拿一块滤镜去找它专门滤掉的脏东西。
+
+`notify` 在阶段 9 明确 `exit 2`，不静默走空。让 `once` 假装通知过是最糟的形态：
+cron 会每天安静地"成功"，而没有一条消息发出去。
+
+
 ---
 
 ## 11. 目录与配置
 
 ```
 /opt/animal/
-  run.sh  refill-prompt.md  prompt.md  template.html  SPEC.md
+  run.sh  publish.sh  refill-prompt.md  prompt.md  template.html  SPEC.md
   src/    lib.py  import-gbif.py  refine-candidates.py  taxon-check.py
           wikitext.py  build-queue.py  refill-check.py
           pick.py  selfcheck.py  render.py  gen-image.py  fetch-material.py
+          publish.py                      # 发布的数据那一半，见 §12.9
   probe/  anchor-verdict.py            # 判据的独立见证，不参与生产
   data/   queue.tsv  ready.jsonl  posts.jsonl  material.json  content/
           candidates.jsonl  pool.jsonl  blacklist.txt  whitelist.txt
           generic-names.txt  rejected.tsv  anchor-rejected.tsv
   docs/   index.html  archive.html  p/  img/
-  state/  logs/  .cache/  .env
+  state/  logs/  .cache/  .env  img_urls.jsonl
 ```
+
+**发布拆成两个文件，是为了让脆的那一半能跑用例。** wiki-bot 把追加 posts.jsonl 的逻辑
+写成 `publish.sh` 里的 python heredoc —— 那样写有一个具体后果：**它永远跑不了用例**，
+而它干的正是本项目最脆的一件事（往 posts.jsonl 写字段，少一个键是静默降级，见 §9b.6）。
+所以数据那一半是 `src/publish.py`（20 条用例），git 那一半留在 `publish.sh`
+（分类重试、跳空 commit、分支保护，都是 shell 的活）。
+
 
 Python 脚本都在 `src/`（初版这一节把它们平铺在根，实现时收进子目录了）。因此
 `lib.ROOT` **必须自动认路**，不能依赖"记得设 `ANIMAL_ROOT`"：目录名是 `src` 且父目录
@@ -980,7 +1034,7 @@ openclaw agent --agent animal --message-file <prompt 文件>
 | 6 | `prompt.md` + `selfcheck.py` | 手写一份 content.json 过校验；故意写错 6 种情况都被拦。**实测 15/15**：11 种写错被拦（含学名错一字母、悄悄换主体、伪注释键、换个中文名撞同一学名）+ 合格样本通过 + 「字迹不可辨」必须放行 + prompt 与禁用词表同步。这一阶段唯一无法靠搬完成，两个产出互为契约，风险不在各自写错而在**两者对不上**（§12.6） |
 | 7 | `gen-image.py --dry-run` | prompt 含学名与近似种负向词。**实测 18 条用例全绿**，并查出 §8.1 风格表本身是错的（类群风格里混着姿态与背景，与主图的生境描述打架）、近似种只能做到同属（40%）、硬约束 3 此前只有注释没有检查 —— 详见 §12.7。这一阶段的价值全在 `--dry-run`：不花一分钱，把每天都会发生的缺陷看出来了 |
 | 8 | `render.py` + 模板 | 页面含 AI 标注；`data/content/*.json` 可 0 token 重渲。**实测 25 条用例全绿**，3 期归档件 `--rebuild-all` 通过。查出的三件事都是**参照物本身的错**：wiki-bot 那条重渲能力今天没有任何命令能做到、模板说明注释会原样发到公网、buildid 漏掉模板 —— 详见 §9b 与 §12.8 |
-| 9 | 全链路 `run.sh once` | 端到端出一期，检查 stage 流转与幂等（连跑两次不重复计费） |
+| 9 | 全链路 `run.sh daily` / `once` / `verify` + `publish.sh` + `src/publish.py` | 端到端出一期，检查 stage 流转与幂等。**实测通过**：`none→content→imaged→rendered→pushed` 一次跑通（2 分 09 秒），第二次全程跳过；真出图后连跑三次 `main=cached sub=cached`、图片 md5 不变、`img_urls.jsonl` 不增行、posts.jsonl 仍 1 行、后两次 git 跳空 commit。查出四件事：buildid 掺了出图状态（§9b.2）、`gen-image.py` 有一整块重复定义、`.env` 会把命令行传的 `IMG_ON=0` 盖回 1、`img_urls.jsonl` 规格里说要 gitignore 而实现漏了 —— 详见 §12.9 |
 | 10 | 挂 cron + 通知 | 观察 3 天 |
 
 ### 12.6 阶段 6 实测：两个产出互为契约，风险在"对不上"
@@ -1125,6 +1179,56 @@ buildid 判断要不要提交，还会整次跳过。**页面 = 内容 + 模板�
 **不崩和不难看是两条，得分开钉**（补成第 25 条）。这也说明 §9b.4 那条"空值消失"的
 原则当时只落在详情页的名录卡上，归档页漏了 —— 原则写进 SPEC 不等于每处都照做了。
 
+### 12.9 阶段 9 实测：四个缺陷，两个来自"规格写了但实现没照做"
+
+端到端结果先摆着：第一跑 `IMG_ON=0`，`none→content→imaged→rendered→pushed` 一次通过，
+2 分 09 秒（其中 agent 写稿约 2 分）；第二跑 0 秒、全程跳过。之后放开真出图
+（main 8090KB→WebP 306KB，sub 5937KB→WebP 100KB），**连跑三次全部 `main=cached
+sub=cached`，图片 md5 逐字节不变，`img_urls.jsonl` 保持 2 行，posts.jsonl 保持 1 行，
+后两次 git 跳空 commit** —— §13.6 点名要在本阶段实测的那条幂等性成立。
+
+**① buildid 掺了出图状态，只有连跑才看得见。** 详见 §9b.2。这个缺陷的形状值得单记：
+它不会让任何一步失败，两次 `daily` 都打印 `push ok`，页面也完全正常；它只是让 posts.jsonl
+里的签名和页面的签名永远不相等，而那个不相等要到阶段 10 的 `wait_live` 才发作，
+表现为**每天判 STALE、每天发降级消息**，届时最自然的怀疑对象是 GitHub Pages 缓存。
+能在这里撞上它，只因为我把两次的 buildid 打在了同一屏日志里。
+
+**② `gen-image.py` 里 `flat` 与 `apply_result` 各有两份完整定义**（第 331–365 行与
+366–400 行，代码逐字相同，只有 docstring 措辞不同）。阶段 7 那次工具延迟落盘、我重试
+一遍留下的。它躲过了 18/18 用例和一次通读，因为 **Python 只用最后一份定义，行为完全
+正确** —— 这类缺陷没有任何症状，只能靠 `grep -c "^def "` 这种机械核对发现。
+现在删掉第一份，用例仍 18/18。
+
+**③ `.env` 会把命令行传的 `IMG_ON=0` 盖回 1。** 原来是 `set -a; . ./.env; set +a`。
+`.env` 里那句注释写着"联调请一律用 `--dry-run` 或 `IMG_ON=0`"，而按这句话做**根本不
+生效**：`. ./.env` 无条件重设 `IMG_ON=1`，第一次联调就会真计费，而日志看起来一切正常。
+改成逐行读、**已在环境里的变量不覆盖**，并实测了三种情形（默认取 .env / 命令行覆盖
+成功且 python 的 `os.environ` 确实看到 0 / .env 为空文件不报错）。
+`set -a` 那半必须留着 —— 不 export 的话 `IMG_API_KEY` 只是个 shell 变量，python 看不见，
+失败方式是 `gen-image` 报 `no_key` 而 `.env` 明明配好了。
+
+**④ `img_urls.jsonl` 规格里写了要 gitignore，实现漏了。** §11 早写着它和 `.env`、
+`.cache/`、`state/` 一样不入库，wiki-bot 的 `.gitignore` 第 9 行也有 —— 只有本项目漏了，
+`git check-ignore` 一问就知道。不入库的理由是 URL 带签名、几小时后失效，入库只留一堆
+过期串；**但本机那份要留着**：物种画错是本项目最主要的失败模式（§13.2），事后追查唯一
+有用的证据就是「当时到底把什么 prompt 发出去了」，而那只在这个文件里。
+
+②③④ 有一个共同点：**它们都不需要跑就能查出来**（一次 `grep -c "^def "`、一次
+`git check-ignore`、一遍读 `.env` 加载那三行），但都是在准备跑的时候才被看见。规格写过
+的事情不等于实现照做了，这已经是本项目第二次撞上同一形态（上一次是 §12.8 的第⑤条，
+"空值消失"原则在归档页没照做）。
+
+**另外两件本阶段刻意做的事：**
+
+- **`notify` 明确 `exit 2`**，不给 `once` 留一条"假装通知过"的路。理由见 §10。
+- **agent 判 `DUP` 时换题重取一次，并且告警。** `prompt.md` §一给了 `DUP` 契约，但在
+  wiki-bot 那边它没有任何消费方 —— agent 说了也白说。DUP 的含义是「queue 里两条行其实
+  是同一个物种，而学名没识破」，那是**队列的缺陷**，不只是今天的意外，得有人去合并那
+  两行。判 DUP 用行首锚定 `^\s*DUP(\s|$)` 而不是 `grep -q DUP`：「子串匹配当相等用」
+  在这个项目已经栽过五次（黑名单误杀东北虎、`falcatus` 含 `catus`、索引里「虎」命中
+  「虎鲸」、重定向繁简字面比较、refill `grep '合格'` 命中"无一合格"）。
+
+
 
 
 ---
@@ -1144,7 +1248,11 @@ buildid 判断要不要提交，还会整次跳过。**页面 = 内容 + 模板�
 5. **docs/img 体积**。wiki-bot 已有 700MB 告警阈值；本项目每天 2 张 WebP（100–300KB），
    一年约 150MB，同样接 `alert size`。
 6. **配图计费**：每天 2 张，四个 cron 补跑窗口靠"文件已存在则跳过"保证不重复扣费。
-   这条幂等性在阶段 9 必须实测（连跑两次 `run.sh daily`，确认第二次全部 `cached`）。
+   **阶段 9 已实测**：真出图一次后连跑三次 `daily`，三次都是 `main=cached sub=cached`，
+   图片 md5 逐字节不变，`img_urls.jsonl` 不增行（§12.9）。两道防线都在且互相独立 ——
+   stage 分流管住"整期跳过"，`gen-image` 内部的文件存在检查管住"stage 被清掉那天"。
+   顺带查出：连跑时 buildid 会变，根因与计费无关但更隐蔽（§9b.2）。
+
 7. **`alias->繁体正名` 这一类拒因是一笔未取用的容量储备（≈40 条）。** 人工过
    `anchor-rejected.tsv` 时发现，被判 `alias` 的多数并不是"错名字"，而是海峡两岸用词
    不同、zhwiki 采了台湾用法：

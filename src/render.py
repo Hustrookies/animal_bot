@@ -173,6 +173,28 @@ def read_template():
     return open(os.path.join(ROOT, "template.html"), encoding="utf-8").read()
 
 
+def _signed_content(content):
+    """buildid 要哈希的那份 content：**剔掉 art.*.status。**
+
+    阶段 9 实测撞出来的。同一期连跑两次 daily，第二次出图全部 cached、图和文一个字节
+    没变，buildid 却从 `a25ddb71` 变成了 `643ca3a3` —— 因为 gen-image.py 把「这次是
+    怎么拿到图的」写回了 content.json（`ok_8090kb_webp_306kb` → `cached`），而它进了
+    签名。而 render 从头到尾只读 `art.*.file` 与 `art.*.alt`，status 一次都没进过页面。
+
+    后果比"每天多一次 git diff"重：posts.jsonl 里的 buildid 是首次追加时记下的，
+    幂等跳过追加之后不会更新，于是阶段 10 的 wait_live 会拿着一个**谁都不等于**的值
+    去比对线上页面 —— 每天判 STALE、每天发降级消息，而页面其实完全正常。
+    签名的定义是「页面变了它就变，页面没变它就不变」，过程信息不属于页面。
+    """
+    c = dict(content)
+    art = c.get("art")
+    if isinstance(art, dict):
+        c["art"] = {k: ({kk: vv for kk, vv in v.items() if kk != "status"}
+                        if isinstance(v, dict) else v)
+                    for k, v in art.items()}
+    return c
+
+
 def page_buildid(content, tpl=None):
     """页面签名 = f(date, content, **模板**)。
 
@@ -186,7 +208,7 @@ def page_buildid(content, tpl=None):
     """
     tpl = read_template() if tpl is None else tpl
     return lib.buildid((content.get("date") or "").strip(),
-                       lib.canonical(content) + tpl.encode("utf-8"))
+                       lib.canonical(_signed_content(content)) + tpl.encode("utf-8"))
 
 
 def render_page(content, archive_rel="../archive.html", buildid=None):
@@ -392,6 +414,18 @@ def selftest():
        page_buildid(good, "<html>A</html>") == page_buildid(good, "<html>A</html>"))
     ck("改内容则 buildid 变",
        page_buildid(good, "x") != page_buildid({**good, "title": "换个标题"}, "x"))
+
+    # ---- 但出图状态不属于页面，不该进签名 ----
+    # 阶段 9 实测：第二次 daily 全部 cached，图和文一字节没变，buildid 却变了。
+    # 根因是 gen-image 把「这次是怎么拿到图的」写回 content.json 而它进了哈希。
+    # 两条一起钉：**页面确实不含 status**（否则剔掉它就是撒谎），**签名也不含**。
+    st_ok = json.loads(json.dumps(good));   st_ok["art"]["main"]["status"] = "ok_8090kb_webp_306kb"
+    st_ca = json.loads(json.dumps(good));   st_ca["art"]["main"]["status"] = "cached"
+    ck("出图状态不影响页面字节", render_page(st_ok, buildid="b") == render_page(st_ca, buildid="b"))
+    ck("出图状态不影响 buildid", page_buildid(st_ok, "x") == page_buildid(st_ca, "x"))
+    # 反面：file 是页面真依赖的，它必须进签名，否则换了图 wait_live 会立刻"通过"
+    st_f = json.loads(json.dumps(good));    st_f["art"]["main"]["file"] = "../img/other.webp"
+    ck("换了图则 buildid 变", page_buildid(good, "x") != page_buildid(st_f, "x"))
 
     # ---- 归档页：字段契约 ----
     # 完整记录必须每个字段都出现在页面上。缺 group_label 时不能崩 —— 那是 publish.sh

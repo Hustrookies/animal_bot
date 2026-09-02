@@ -337,6 +337,51 @@ def index_path():
         os.path.join(ROOT, ".cache", "zhwiki-latest-pages-articles-multistream-index.txt"))
 
 
+# ---------- posts.jsonl 的字段契约 ----------
+# 每条记录必须有的键 → 谁在消费它。**这张表是唯一的定义处**，publish.py 拿它断言、
+# render.py 拿它的子集验归档页。
+#
+# 为什么值得单独立一张表：少一个键的后果全都**不是崩，而是静默降级**。
+#   · 少 scientific_name → pick.py 的 used_sci 与同属冷却双双失效，中文名换个写法
+#     （美洲狮／山狮）就能在半年窗口内再推一次，而日志全绿。
+#   · 少 entities → lib.sim 的实体重叠恒为 0，那是去重的主信号，相似度整体偏低，
+#     软重复再也拦不住。
+#   · 少 group_label → 归档页每行的类群标签空着（阶段 8 已经因为这个漏过一次空壳）。
+# 本项目已经栽过两次「取字段不核键名」（iucn_raw、pick.py 拿 wiki 当键查 material），
+# 两次的症状都是"看起来在跑、其实什么都没查"。所以这里要断言，不是注释。
+POST_FIELDS = {
+    "date":            "load_posts 去重键之一；pick.py 半年窗口；归档页排序",
+    "subject":         "load_posts 去重键之一；pick.py used_subj",
+    "scientific_name": "pick.py used_sci 与同属冷却（genus_of）—— 中文名有异名，学名才是身份",
+    "group":           "排障：断供时要看清是哪个类群",
+    "group_label":     "归档页的类群标签（render.build_archive）",
+    "title":           "lib.sim 相似度；归档页",
+    "summary":         "lib.sim 相似度；归档页",
+    "entities":        "lib.sim 实体重叠 —— 去重主信号",
+    "buildid":         "wait_live 判定线上是不是本期（阶段 10）",
+    "url":             "归档页链接",
+}
+
+
+def post_defects(rec):
+    """返回 rec 违反 POST_FIELDS 契约的说明列表；空列表 = 合格。
+
+    **空值等于缺键**，一律算违反：`scientific_name: ""` 对 pick.py 的伤害和没有这个键
+    完全一样（`used_sci` 里多一个空串，什么都拦不住），而它更难看出来 —— 键在，
+    grep 得到，人就以为没问题。
+    """
+    bad = []
+    for k, why in POST_FIELDS.items():
+        v = rec.get(k)
+        if k == "entities":
+            if not isinstance(v, list) or not [x for x in v if str(x).strip()]:
+                bad.append("entities 空或不是非空列表（%s）" % why)
+            continue
+        if not isinstance(v, str) or not v.strip():
+            bad.append("%s 缺失或为空（%s）" % (k, why))
+    return bad
+
+
 def load_posts():
     """读 data/posts.jsonl（真相）。按 (date,subject) 去重。"""
     p, seen, out = jsonl_path(), set(), []
