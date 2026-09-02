@@ -59,3 +59,7 @@ probe/*.txt
 __pycache__/
 *.pyc
 .env
+# 改 .env 前留的备份（阶段 10 加 WEIXIN_* 时留了一份）。写 `.env` 一条不够 ——
+# gitignore 不做前缀匹配，`.env.bak.s10` 照样是未跟踪文件，而 verify 那条「git 无
+# 未提交」检查会因此变红；更要紧的是它和 .env 一样装着明文凭证，绝不能进版本历史。
+.env.bak.*
