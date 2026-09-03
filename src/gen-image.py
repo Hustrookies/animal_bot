@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """生成当日配图 —— 0 token，但按张计费。
 
-读 content.json 的 art.main/art.sub，拼 prompt → 调 wan2.7-image → 下载到 docs/img/，
+读 content.json 的 art.main/art.sub，拼 prompt → 调 IMG_MODEL 指定的模型（当前 wan2.7-image-pro）→ 下载到 docs/img/，
 把文件名写回 art.*.file，好让 render.py 与「data/content/<date>.json 可 0 token 重渲」
 都能拿到路径。
 
@@ -34,7 +34,7 @@ import lib
 
 TIMEOUT   = int(os.environ.get("IMG_TIMEOUT", "120"))
 MAX_BYTES = int(os.environ.get("IMG_MAX_BYTES", str(8 * 1024 * 1024)))
-MODEL     = os.environ.get("IMG_MODEL", "wan2.7-image")
+MODEL     = os.environ.get("IMG_MODEL", "wan2.7-image-pro")
 APIKEY    = os.environ.get("IMG_API_KEY", "")
 ENABLED   = os.environ.get("IMG_ON", "1") not in ("0", "", "false", "off")
 
@@ -77,6 +77,8 @@ FRAME = {
 # 「对于不希望出现的元素，请在正向提示词中描述（不要出现xxx）」），所以这些词是并入
 # 正向 prompt 末尾发出去的，不是独立通道。这一点决定了负向段要写成句子而不是词表堆砌
 # —— 逗号分隔的裸词更容易被当成要画的东西。
+# 这条结论出自**普通版** wan2.7-image；2026-09-03 起在跑 -pro，pro 是否也不收
+# negative_prompt 未单独验证。不验证没有故障风险：并入正文两种情况都能工作。
 NEGATIVE = ("照片写实风格、摄影、镜头虚化、人物、文字、标签、水印、"
             "畸变的肢体、多余的头、解剖结构错误、过饱和、HDR、廉价游戏CG感、低分辨率")
 
@@ -84,6 +86,9 @@ NEGATIVE = ("照片写实风格、摄影、镜头虚化、人物、文字、标�
 # 被兼容模式忽略，恒定输出 2048×2048。官方文档说 wan2.7-image 支持 1:8–8:1，参数位置
 # 是 `parameters.size` —— 也就是说这大概是参数放错了位置而非模型不支持，但没有实测过
 # （要真发一次请求，会计费），所以这里只留作日志标注与 CSS 侧的期望值，见 SPEC §13.10。
+# 2026-09-03 实测证实了「出方图」这一半：成品是 1280×1280 与 1024×1024，因为
+# cwebp -resize W 0 只按宽缩放。没验的是 parameters.size 收不收 —— 换 -pro 后
+# 这问题重新有价值：pro 若认它，花一张图就能修掉这条长期缺陷。
 RATIO = {"main": "16:9", "sub": "4:3"}
 
 WEBP_Q    = int(os.environ.get("IMG_WEBP_Q", "82"))
