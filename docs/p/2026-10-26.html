@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="format-detection" content="telephone=no">
+<meta name="theme-color" content="#3b2b1f">
+<meta name="x-build" content="2026-10-26-a5618ea2">
+<meta name="description" content="沼泽鹿是南美洲体型最大的鹿，一般重150公斤，离不开季节性泛滥的湿地。它的蹄宽大，趾间有具弹性的膜，既能在烂泥上行走，也便于游泳。过去它遍及南美，如今分布退缩；捕食它的美洲豹与美洲狮几乎从栖息地消失，主要威胁是水坝和欧洲牛带来的传染病。">
+<title>蹄子张开，像雪靴踩在烂泥上 · 食肉与有蹄</title>
+<style>
+:root{
+  --accent:#3b2b1f;
+  --paper:#f7f6f2; --card:#fff; --fg:#17181a; --dim:#54565b; --muted:#8a8c92;
+  --line:#e6e4dd; --tint:#faf9f5;
+}
+@media(prefers-color-scheme:dark){:root{
+  --paper:#0e1013; --card:#181b20; --fg:#e8eaed; --dim:#a2a8b0; --muted:#7d838b;
+  --line:#282c33; --tint:#14171b;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--fg);
+  font:16px/1.75 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+  -webkit-text-size-adjust:100%}
+.wrap{max-width:640px;margin:0 auto;padding:26px 16px 44px}
+
+/* ---------- 头部 ---------- */
+.kicker{font-size:12.5px;color:var(--muted);letter-spacing:.06em;margin-bottom:9px}
+.kicker b{color:var(--accent);font-weight:600}
+h1{font-size:25px;line-height:1.38;margin:0 0 12px;letter-spacing:-.01em}
+.ident{display:flex;flex-wrap:wrap;gap:4px 9px;align-items:baseline;
+  padding-bottom:14px;border-bottom:2px solid var(--accent)}
+.ident .zh{font-size:16.5px;font-weight:600}
+.ident .sci{font-size:14.5px;color:var(--dim);font-style:italic;letter-spacing:.01em}
+
+/* ---------- 配图 ---------- */
+figure{margin:18px 0 0}
+figure img{width:100%;height:auto;display:block;border-radius:10px;background:var(--tint)}
+figcaption{font-size:12.5px;color:var(--dim);line-height:1.6;margin-top:8px}
+.aigen{font-size:11.5px;color:var(--muted);margin-top:4px;display:flex;gap:5px;align-items:center}
+.aigen::before{content:"";width:5px;height:5px;border-radius:50%;
+  background:var(--muted);flex:none;opacity:.7}
+
+/* ---------- 摘要 ---------- */
+.lead{font-size:16.5px;line-height:1.8;margin:20px 0 0;color:var(--fg)}
+
+/* ---------- 名录卡 ---------- */
+.profile{background:var(--card);border:1px solid var(--line);border-radius:12px;
+  padding:15px 16px;margin:20px 0 0}
+.iucn{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;
+  padding:4px 10px;border-radius:20px;margin-bottom:11px;font-weight:600;
+  background:var(--tint);border:1px solid var(--line)}
+.iucn i{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
+.iucn.x i,.iucn.ew i{background:#1a1a1a}
+.iucn.cr i{background:#c0392b}
+.iucn.en i{background:#d35400}
+.iucn.vu i{background:#c9a227}
+.iucn.nt i{background:#7f9c3a}
+.iucn.lc i{background:#3f8f52}
+.iucn .src{font-weight:400;color:var(--muted);font-size:11.5px}
+.rows{display:grid;grid-template-columns:auto 1fr;gap:7px 14px;font-size:14.5px}
+.rows .k{color:var(--muted);white-space:nowrap}
+.rows .v{color:var(--fg);min-width:0;overflow-wrap:break-word}
+
+/* ---------- 正文 ---------- */
+.body section{margin:24px 0 0}
+.body h2{font-size:16px;margin:0 0 7px;color:var(--accent);
+  display:flex;align-items:center;gap:8px}
+.body h2::after{content:"";height:1px;background:var(--line);flex:1}
+.body p{margin:0;color:var(--dim);line-height:1.82}
+
+/* ---------- 存疑 ---------- */
+.uncertain{margin:26px 0 0;padding:13px 15px;border-radius:10px;
+  background:var(--tint);border:1px dashed var(--line)}
+.uncertain .lbl{font-size:12px;color:var(--muted);letter-spacing:.04em}
+.uncertain ul{margin:8px 0 0;padding-left:19px}
+.uncertain li{font-size:13.5px;color:var(--dim);line-height:1.7;margin:3px 0}
+
+/* ---------- 标签 / 页脚 ---------- */
+.tags{display:flex;flex-wrap:wrap;gap:7px;margin:24px 0 0}
+.tags span{font-size:12.5px;color:var(--dim);background:var(--card);
+  border:1px solid var(--line);border-radius:5px;padding:3px 9px}
+footer{margin:30px 0 0;padding-top:15px;border-top:1px solid var(--line);
+  font-size:12.5px;color:var(--muted)}
+footer .r{display:flex;justify-content:space-between;gap:12px;padding:3px 0}
+footer a{color:var(--accent);text-decoration:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="kicker"><b>食肉与有蹄</b> · 10月26日 星期一</div>
+    <h1>蹄子张开，像雪靴踩在烂泥上</h1>
+    <div class="ident">
+      <span class="zh">沼泽鹿</span>
+      <span class="sci">Blastocerus dichotomus</span>
+    </div>
+  </header>
+
+  
+  
+  <figure>
+    <img src="../img/2026-10-26-main.webp" alt="泛滥湿地中涉水而立、抬头的赤褐色沼泽鹿" loading="eager">
+    <figcaption>泛滥湿地中涉水而立、抬头的赤褐色沼泽鹿</figcaption>
+    <div class="aigen">插图由 AI 生成，仅供示意，非真实影像</div>
+  </figure>
+  
+
+  <p class="lead">沼泽鹿是南美洲体型最大的鹿，一般重150公斤，离不开季节性泛滥的湿地。它的蹄宽大，趾间有具弹性的膜，既能在烂泥上行走，也便于游泳。过去它遍及南美，如今分布退缩；捕食它的美洲豹与美洲狮几乎从栖息地消失，主要威胁是水坝和欧洲牛带来的传染病。</p>
+
+  
+  <div class="profile">
+    
+    <div class="iucn vu"><i></i>易危<span class="src">GBIF</span></div>
+    
+    
+    <div class="rows">
+      
+      <span class="k">体长</span><span class="v">长达2米，高1.2米</span>
+      
+      <span class="k">体重</span><span class="v">一般重150公斤</span>
+      
+      <span class="k">食性</span><span class="v">草食性，主要吃草、果实及根部，有时侵入农地吃农作物</span>
+      
+      <span class="k">生境</span><span class="v">沼泽、潘塔纳尔湿地及大厦谷，一般在水深达半米的地方</span>
+      
+      <span class="k">分布</span><span class="v">阿根廷、玻利维亚、巴西、乌拉圭及巴拉圭；现限于巴西巴拉那州及巴拉圭的沼泽和湖泊，并在亚马逊地区</span>
+      
+    </div>
+    
+  </div>
+  
+
+  <div class="body">
+    
+    <section><h2>住在涨水的地方</h2><p>水一漫上来，潘塔纳尔的草地就成了半米深的浅塘，这正是沼泽鹿最自在的刻度。它是南美洲最大的鹿，身长可达2米、高1.2米，却离不开季节性泛滥的湿地。历史上它的分布遍及整个南美洲，如今退缩到巴西巴拉那州和巴拉圭的沼泽湖泊，以及亚马逊地区。沼泽里高立的植物既是它的食物，也能替它遮挡追兵的视线。</p></section>
+    
+    <section><h2>张开的蹄子</h2><p>沼泽鹿的蹄大而宽，趾间连着一层有弹性的膜，踩进烂泥时向两侧张开，像给自己垫了一双雪靴；同一套构造也帮它划水，它是出名的游泳能手。它主要在夜间活动，独居或以少于6头的小群生活，不占领地，在分布范围内四处觅食。到了旱季，它会减少活动，多留在水边。</p></section>
+    
+    <section><h2>天敌先退场了</h2><p>最容易让人意外的是：威胁沼泽鹿的名单上，捕食者几乎被划掉了。它的主要天敌美洲豹和美洲狮，差不多已经在它的栖息地里完全消失。只有雄鹿长着长60厘米的网状鹿角，过去人们为鹿角猎杀它，如今已受到管制。如今轮到栖息地和疾病：亚塞瑞塔水坝破坏了它依赖的沼泽，来自欧洲牛的传染病也是威胁。幼鹿在10月到11月间出生，通体白色，一年之后才换上成体的赤褐色。</p></section>
+    
+  </div>
+
+  
+  <figure>
+    <img src="../img/2026-10-26-sub.webp" alt="趾间膜张开的沼泽鹿宽蹄特写" loading="lazy">
+    <figcaption>趾间膜张开的沼泽鹿宽蹄特写</figcaption>
+    <div class="aigen">插图由 AI 生成，仅供示意，非真实影像</div>
+  </figure>
+  
+
+  
+
+  
+  <div class="tags"><span>鹿科</span><span>湿地</span><span>南美洲</span><span>有蹄类</span><span>易危</span></div>
+  
+
+  <footer>
+    <div class="r"><span>食肉与有蹄</span><span>10月26日 星期一</span></div>
+    <div class="r"><span>生物地理界</span><span>新热带界</span></div>
+    <div class="r"><span>事实锚</span><span>中文维基百科</span></div>
+    <div class="r"><span>往期</span><span><a href="../archive.html">归档索引</a></span></div>
+  </footer>
+
+</div>
+</body>
+</html>
